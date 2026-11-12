@@ -1,0 +1,11 @@
+{
+  "taskd": "submit",
+  "protocol": "taskd/1",
+  "goal": "读取提供的示例资料，在 out/report.txt 写一份带来源的中文摘要",
+  "acceptance": [
+    {"id": "report", "type": "files", "pattern": "out/report.txt", "count": 1},
+    "摘要中的每项结论均标注提供资料中的来源"
+  ],
+  "constraints": ["只读取提供的资料", "只在任务工作目录写入结果"],
+  "budget": {"max_steps": 20, "max_hours": 1, "step_timeout_min": 10}
+}

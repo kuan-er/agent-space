@@ -1,0 +1,21 @@
+// Pure render regression tests: no network, browser or runtime services.
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const source = fs.readFileSync(require('node:path').join(__dirname, '../static/app.js'), 'utf8');
+const start = source.indexOf('function executionFacts(');
+const end = source.indexOf('function workTask(', start);
+const context = {Date, Number, workAge: x => x ? '200 秒前' : '暂无记录', esc: x => String(x).replaceAll('<', '&lt;')};
+vm.createContext(context);
+vm.runInContext(source.slice(start, end), context);
+const render = context.executionFacts;
+assert.match(render(null), /不推断为原生 Goal/);
+const html = render({schema:1,route:'native',goal_status:'complete',iteration:3,updated_at:Date.now()/1000-200,retry:{reason:'model_at_capacity',attempt:2},stop:{requested:true,confirmed:false,resource_retained:true}});
+for (const text of ['不等于验收通过','已观察 3 轮','第 2 次重试','不能视为资源已释放','资源仍保留隔离','当前状态待确认']) assert.ok(html.includes(text), text);
+assert.ok(!render({schema:1,route:'native',stop:{requested:true,confirmed:true}}).includes('资源已释放'));
+assert.ok(!render({schema:1,route:'planned',routing_reason:'explicit_planned'}).includes('原生 Goal</'));
+assert.ok(!render({schema:1,route:'native',last_event:'<img src=x onerror=alert(1)>'}).includes('<img'));
+const oldRetry = render({schema:1,route:'native',updated_at:Date.now()/1000,retry:{reason:'model_at_capacity',at:Date.now()/1000-200}});
+assert.ok(oldRetry.includes('历史重试记录'));
+assert.ok(!oldRetry.includes('最近重试记录'));
+console.log('execution facts UI: 12 assertions passed');
