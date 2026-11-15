@@ -14,7 +14,7 @@ def module(name, path):
     return m
 connector = module('visibility_connector', ROOT/'connector.py')
 server = module('visibility_server', ROOT/'server.py')
-producer = module('visibility_producer', ROOT.parent/'taskd/taskd/execution_facts.py')
+producer = module('visibility_producer', ROOT.parent/'client/cli/taskd_app/taskd/execution_facts.py')
 
 class ExecutionFactsTests(unittest.TestCase):
     def test_boundary_sanitizers_match_and_reject_untrusted_content(self):

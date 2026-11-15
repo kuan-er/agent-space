@@ -116,7 +116,7 @@ class NoCredentialRedirect(HTTPRedirectHandler):
 
 def remote(base,path,d,credential=None,timeout=4):
     if not base.startswith('https://') and not base.startswith('http://127.0.0.1:'):raise RuntimeError('平台必须使用 HTTPS')
-    req=Request(base+path,data=json.dumps(d).encode(),headers={'Content-Type':'application/json',**({'Authorization':'Bearer '+credential} if credential else {})})
+    req=Request(base+path,data=json.dumps(d,ensure_ascii=path!='/api/node/work-content').encode(),headers={'Content-Type':'application/json',**({'Authorization':'Bearer '+credential} if credential else {})})
     try:
         with build_opener(NoCredentialRedirect()).open(req,timeout=timeout) as r:return json.load(r)
     except HTTPError as e:
@@ -617,6 +617,58 @@ def clean_execution_facts(raw, observed_now=None):
     return out
 
 
+# Content protocol is separate from bounded heartbeat metadata. Never carries raw output.
+WORK_CONTENT_FIELDS = ('goal', 'phase', 'milestone', 'summary', 'next', 'reason', 'step_blocker', 'diagnostic')
+def clean_work_content(raw):
+    if not isinstance(raw, dict) or raw.get('schema') != 1 or not isinstance(raw.get('fields'), dict):
+        return None
+    remaining = 32768
+    fields, truncated = {}, []
+    for key in WORK_CONTENT_FIELDS:
+        value = raw['fields'].get(key)
+        if not isinstance(value, str): continue
+        value = redact(value)
+        limit = min(16384, remaining)
+        fields[key] = value[:limit]
+        if len(value) > limit or key in (raw.get('truncated') if isinstance(raw.get('truncated'), list) else []):
+            truncated.append(key)
+        remaining -= len(fields[key])
+    return {'schema': 1, 'fields': fields, 'truncated': truncated, 'field_limit': 16384, 'total_limit': 32768}
+
+def work_content_records(root, executor):
+    if not sync_enabled(root): return []
+    td = taskd_state(root)
+    if not td or not taskd_serves(td, executor): return []
+    work = td.get('work') or {}
+    if work.get('schema') != 1: return []
+    records = []
+    for task in (work.get('tasks') if isinstance(work.get('tasks'), list) else [])[:50]:
+        if not isinstance(task, dict) or not isinstance(task.get('id'), str): continue
+        phase, step, blocker = task.get('phase') or {}, task.get('last_step') or {}, task.get('blocker') or {}
+        if not all(isinstance(x, dict) for x in (phase, step, blocker)): continue
+        milestone = phase.get('milestone') or {}
+        content = clean_work_content({'schema': 1, 'fields': {
+            'goal': task.get('goal'), 'phase': phase.get('title'),
+            'milestone': milestone.get('current') if isinstance(milestone, dict) else None,
+            'summary': step.get('summary'), 'next': step.get('next'), 'reason': task.get('reason'),
+            'step_blocker': step.get('blocker'), 'diagnostic': blocker.get('detail')}})
+        records.append({'task_id': task['id'], 'observed_at': work.get('observed_at'), 'content': content})
+    return records
+
+def push_work_content(root, executor, state):
+    sent = 0
+    for record in work_content_records(root, executor):
+        if not sync_enabled(root): break
+        try:
+            remote(state['portal'], '/api/node/work-content', record, state['node_token'], timeout=3)
+            sent += 1
+        except RemoteError as e:
+            print('任务正文同步未完成：'+type(e).__name__,flush=True)
+            if e.status in (401,403,404,429): break
+            # A missing/racing task or oversized record must not starve later tasks.
+        except Exception as e:print('任务正文同步未完成：'+type(e).__name__,flush=True)
+    return sent
+
 def work_info(root, executor):
     """Only taskd-managed ANet work. Content sync remains opt-in, independently of status."""
     td=taskd_state(root)
@@ -941,6 +993,12 @@ def main():
                 except Exception as e:
                     save_update_state(folder,last_check=int(time.time()),result='error:'+str(e)[:50]);print('更新检查未完成：'+str(e)[:120],flush=True)
             time.sleep(6*3600+random.randint(0,1800))
+    def work_content_loop():
+        # Independent from heartbeat and interaction sync; 50/minute stays below 600/10min.
+        while True:
+            try: push_work_content(root, executor, state)
+            except Exception as e:print('任务正文读取未完成：'+type(e).__name__,flush=True)
+            time.sleep(60)
     def sync_loop():
         seen={}
         while True:
@@ -969,7 +1027,9 @@ def main():
                 time.sleep(1)
         print('调用端模式：仅保持节点和连接心跳，不启用任务执行。' if kind=='device' else '中心 HTTPS 权限接口模式；本地进程仅报告连接状态。',flush=True)
         threading.Thread(target=update_loop,daemon=True).start()
-        if kind!='device':threading.Thread(target=sync_loop,daemon=True).start()
+        if kind!='device':
+            threading.Thread(target=sync_loop,daemon=True).start()
+            threading.Thread(target=work_content_loop,daemon=True).start()
         heartbeat()
         return
     if sys.platform=='win32':raise RuntimeError('Windows 节点尚未配置 HTTPS 权限接口，请运行 configure。')
@@ -997,7 +1057,7 @@ def main():
         else:raise RuntimeError('权限辅助程序已经运行')
         finally:probe.close()
     with UnixServer(str(sock),Local) as server:
-        sock.chmod(0o600);threading.Thread(target=heartbeat,daemon=True).start();threading.Thread(target=sync_loop,daemon=True).start();threading.Thread(target=update_loop,daemon=True).start();print('本地权限接口已启动',flush=True)
+        sock.chmod(0o600);threading.Thread(target=heartbeat,daemon=True).start();threading.Thread(target=sync_loop,daemon=True).start();threading.Thread(target=work_content_loop,daemon=True).start();threading.Thread(target=update_loop,daemon=True).start();print('本地权限接口已启动',flush=True)
         try:server.serve_forever()
         finally:sock.unlink(missing_ok=True)
 if __name__=='__main__':

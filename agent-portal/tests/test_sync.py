@@ -9,7 +9,7 @@ def thread(ix,state='working',n=1):
     return {'interaction_id':ix,'role':'outbound','peer':PEER,'goal':'goal Bearer abcdefghijklmnopqrstuvwxyz','state':state,'created_at':'2099-01-01T00:00:00Z','updated_at':'2099-01-01T00:00:09Z','messages':msgs}
 class SyncTest(unittest.TestCase):
     def test_record_masks_secrets_and_drops_status_heartbeats(self):
-        t=thread('ix_'+'a'*32,n=2);t['messages'][0]['body']='api_key=abc123456789 and sk-abcdefghijklmnopqrstuvwxyz1234';t['messages'][0]['attachments']=[{'name':'a.txt','size':3,'mime':'text/plain','cid':'private'}]  # gitleaks:allow -- synthetic redaction fixture, not a credential
+        t=thread('ix_'+'a'*32,n=2);t['messages'][0]['body']='api_key=abc123456789 and sk-abcdefghijklmnopqrstuvwxyz1234';t['messages'][0]['attachments']=[{'name':'a.txt','size':3,'mime':'text/plain','cid':'private'}]
         r=m.thread_record(t)
         self.assertEqual(len(r['messages']),2);self.assertNotIn('abc123456789',str(r));self.assertNotIn('sk-abcdef',str(r));self.assertNotIn('Bearer abcdefgh',str(r));self.assertNotIn('private',str(r))
         self.assertEqual(r['state'],'working')

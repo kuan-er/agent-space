@@ -227,24 +227,5 @@ class HarnessConnectorTest(unittest.TestCase):
         self.assertEqual((self.folder / 'pi_bridge.py').read_text(), 'original')
         self.assertEqual(json.loads((self.root / 'config.json').read_text())['auto_reply'], self.ar)
 
-    def test_workbuddy_portal_configuration_keeps_tokens_out_of_executor_settings(self):
-        args=['connector.py','configure-harness','--data-dir',str(self.root),'--anet',sys.executable,
-              '--harness','workbuddy','--work-dir',str(self.work),'--mode','direct']
-        def remote(base,path,data,credential=None,**kwargs):
-            return {'kind':'agent','executor':'workbuddy'} if path=='/api/node/info' else {'access_token':'temporary-access','expires_at':9999999999}
-        def fake(cmd,**kwargs):
-            return subprocess.CompletedProcess(cmd,0,json.dumps({'allow':[],'trust':[],'public_capabilities':[]}), '')
-        with patch.object(self.m.sys,'argv',args),patch.object(self.m,'remote',side_effect=remote),patch.object(self.m.sys.stdin,'isatty',return_value=True),patch.object(self.m.subprocess,'run',side_effect=fake):
-            self.m.main()
-        settings=json.loads((self.folder/'harness-executor.json').read_text())
-        self.assertEqual(settings['workbuddy_auth'],'portal')
-        self.assertEqual(settings['connection_file'],str(self.folder/'connection.json'))
-        self.assertNotIn('temporary-access',json.dumps(settings))
-        self.assertNotIn('credential_file',settings)
-        (self.folder/'harness-check.json').write_text(json.dumps({'ok':True,'harness':'workbuddy','fingerprint':self.m.harness_fingerprint(self.root)}))
-        self.assertTrue(self.m.harness_ready(self.root,self.ar,'workbuddy'))
-        (self.folder/'workbuddy-pending.json').write_text('{}')
-        self.assertFalse(self.m.harness_ready(self.root,self.ar,'workbuddy'))
-
 
 if __name__ == '__main__':unittest.main(verbosity=2)

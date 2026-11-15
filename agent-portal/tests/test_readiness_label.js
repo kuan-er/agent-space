@@ -1,0 +1,12 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const src=fs.readFileSync(process.argv[2]||__dirname+'/../static/app.js','utf8');
+const ctx={};vm.createContext(ctx);vm.runInContext(src.slice(src.indexOf('function stateInfo('),src.indexOf('function led(')),ctx);
+const pending=ctx.stateInfo({kind:'agent',status:'executor_pending'});
+assert.equal(pending.label,'执行器待核验');assert.equal(pending.tone,'warn');assert(pending.meaning.includes('不代表软件未安装'));assert(pending.next.includes('不要贸然重装或重启'));
+assert.equal(ctx.stateInfo({kind:'agent',status:'ready'}).label,'可用');
+assert.equal(ctx.stateInfo({kind:'agent',status:'offline'}).label,'离线');
+assert.equal(ctx.stateInfo({kind:'agent',status:'unknown'}).label,'待检查');
+assert.equal(ctx.stateInfo({kind:'agent',status:'policy_pending'}).label,'门户独占策略待核验');
+assert(ctx.stateInfo({kind:'agent',status:'policy_pending'}).meaning.includes('须按发起身份核对'));
+assert(!src.includes('"缺软件"'));assert(src.includes('missing_dependency:"缺少依赖或命令"'));
+console.log('11 readiness label assertions passed; ready/offline/unknown/policy and genuine missing-dependency detail retained');

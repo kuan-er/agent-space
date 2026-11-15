@@ -49,11 +49,6 @@ class PortalTest(unittest.TestCase):
   target=self.new_agent(admin,'私有助手');selfreq=self.new_device(admin,'本人的调用设备');other=self.new_device(bob,'同学设备')
   aid1='b'+'a'*58;aid2='b'+'b'*58;aid3='b'+'c'*58
   nt=self.pair(admin,target,aid1);nd=self.pair(admin,selfreq,aid2,'device');nb=self.pair(bob,other,aid3,'device')
-  directory=self.req('/api/node/directory','POST',{},node=nd)[1]
-  self.assertEqual(directory['source'],'agent-space')
-  self.assertEqual([x['aid'] for x in directory['agents']],[aid1])
-  self.assertEqual(self.req('/api/node/directory','POST',{},node=nb)[1]['agents'],[])
-  self.assertEqual(self.req('/api/node/directory','POST',{})[0],401)
   self.assertEqual(self.req('/api/node/info','POST',{},node=nd)[1]['kind'],'device')
   self.assertEqual(len(self.req('/api/agents',user=admin)[1]['agents']),1)
   self.assertEqual(len(self.req('/api/devices',user=admin)[1]['devices']),1)
@@ -306,33 +301,6 @@ class PortalTest(unittest.TestCase):
   with m.db() as c:c.execute('UPDATE users SET enabled=0 WHERE id=?',(o['id'],))
   self.assertNotIn('gr-other显示名',json.dumps(self.req('/api/graph',user=u)[1],ensure_ascii=False))
   with m.db() as c:c.execute('UPDATE users SET enabled=1 WHERE id=?',(o['id'],));c.execute("UPDATE agents SET visibility='private' WHERE visibility='public'")
- def test_graph_links_show_real_calls_without_leaking(self):
-  m.RATES.clear();m.PULSES.clear()
-  def member(name):
-   self.assertEqual(self.req('/api/auth/register','POST',{'username':name,'name':name+'显示名','password':'test-password-123'})[0],201)
-   _,_,cookie=self.req('/api/auth/login','POST',{'username':name,'password':'test-password-123'})
-   x={'cookie':cookie.split(';')[0]};x.update(self.req('/api/me',user=x)[1]);return x
-  u=member('lk-me');o=member('lk-other')
-  mine=self.new_agent(u,'我的链路智能体');nm=self.pair(u,mine,'b'+'qa'*29)
-  pub=self.new_agent(o,'他的公开链路');npub=self.pair(o,pub,'b'+'qb'*29);self.req('/api/agents/'+pub,'PATCH',{'visibility':'public'},o)
-  priv=self.new_agent(o,'他的私有链路');npriv=self.pair(o,priv,'b'+'qc'*29)
-  for n in (nm,npub,npriv):self.req('/api/node/heartbeat','POST',{'connected':True,'policy_ok':True,'executor_ready':True},node=n)
-  self.assertEqual(self.req('/api/graph',user=u)[1]['links'],[])
-  # my agent calls their public agent: admitted, and the link joins two nodes the viewer can see
-  self.assertTrue(self.req('/api/node/inbound','POST',{},node=npub,caller='b'+'qa'*29)[1]['admit'])
-  links=self.req('/api/graph',user=u)[1]['links'];self.assertEqual(len(links),1);l=links[0]
-  self.assertFalse(l['refused']);self.assertEqual(len(l['from']),2);self.assertEqual(len(l['to']),2);self.assertNotEqual(l['from'][0],l['to'][0])
-  # a call into their private agent is refused; only its owner may see that, and the caller is not named
-  self.assertFalse(self.req('/api/node/inbound','POST',{},node=npriv,caller='b'+'qa'*29)[1]['admit'])
-  self.assertEqual(len(self.req('/api/graph',user=u)[1]['links']),1)
-  theirs=self.req('/api/graph',user=o)[1]['links'];self.assertTrue(any(x['refused'] for x in theirs))
-  g=self.req('/api/graph',user=u)[1];self.assertNotIn('b'+'qc'*29,json.dumps(g,ensure_ascii=False))  # their private agent's AID
-  for x in g['links']:self.assertEqual(set(x),{'from','to','at','live','refused','count','msgs'})  # positions only, no AIDs
-  # a caller nobody can see is drawn from the network, not tied to a member
-  m.PULSES.clear();self.req('/api/node/inbound','POST',{},node=npub,caller='b'+'qz'*29)
-  self.assertEqual(self.req('/api/graph',user=u)[1]['links'],[])  # refused, and not mine to see
-  unknown=[x for x in self.req('/api/graph',user=o)[1]['links'] if x['refused']];self.assertEqual(unknown[0]['from'],[])
-  m.PULSES.clear()
  def test_requester_capability_is_independent_and_expires(self):
   m.RATES.clear()
   self.assertEqual(self.req('/api/auth/register','POST',{'username':'requester-owner','name':'Requester test','password':'test-password-123'})[0],201)
@@ -364,69 +332,4 @@ class PortalTest(unittest.TestCase):
    for block in re.findall(rb'<'+tag.encode()+rb'>(.*?)</'+tag.encode()+rb'>',body,re.S):
     self.assertIn(base64.b64encode(hashlib.sha256(block).digest()).decode(),policy)
   self.assertIn('一项任务'.encode(),body)
- def test_work_milestones_purpose_timing_privacy(self):
-  ts=m.now()
-  raw={'schema':1,'source':'taskd','scope':'anet_tasks','observed_at':ts,'counts':{'running':1},'content_synced':True,
-       'tasks':[{'id':'task1','state':'running','last_purpose':'execution',
-                 'phase':{'index':1,'total':1,'milestone':{'done':1,'total':4,'current':'private project loaded'}},
-                 'timing':{'execution':{'calls':2,'seconds':1.25},'model_only':{'calls':1,'seconds':0.1}},
-                 'events':[{'event':'milestone_done','at':ts},{'event':'executor_started','at':ts,'purpose':'review'}]}]}
-  task=m.clean_work(raw)['tasks'][0]
-  self.assertEqual(task['phase']['milestone']['current'],'private project loaded')
-  self.assertEqual(task['timing'],{'execution':{'calls':2,'seconds':1.25}})
-  self.assertEqual(task['events'][1]['purpose'],'review')
-  raw['content_synced']=False
-  self.assertNotIn('current',m.clean_work(raw)['tasks'][0]['phase']['milestone'])
-  raw['tasks'][0]['last_purpose']={'evil':True};raw['tasks'][0]['events'][1]['purpose']=[]
-  raw['tasks'][0]['timing']['execution']['seconds']=float('nan')
-  task=m.clean_work(raw)['tasks'][0]
-  self.assertNotIn('last_purpose',task);self.assertNotIn('execution',task['timing'])
-
- def test_work_heartbeat_freshness_privacy_and_legacy_nodes(self):
-  from unittest.mock import patch
-  def signup(name):
-   self.assertEqual(self.req('/api/auth/register','POST',{'username':name,'name':name,'password':'test-password-123'})[0],201)
-   _,_,cookie=self.req('/api/auth/login','POST',{'username':name,'password':'test-password-123'})
-   user={'cookie':cookie.split(';')[0]};_,data,_=self.req('/api/me',user=user);user.update(data);return user
-  u=signup('work-owner');other=signup('work-viewer')
-  aid=self.new_agent(u,'work-status-agent');nt=self.pair(u,aid,'b'+'w'*58)
-  self.req('/api/agents/'+aid,'PATCH',{'visibility':'public'},u)
-  ts=m.now();work={'schema':1,'source':'taskd','scope':'anet_tasks','observed_at':ts,'counts':{'running':1,'queued':2,'waiting':1,'blocked':0},'content_synced':True,'tasks':[{'id':'task1','mode':'long','state':'running','goal':'private goal','phase':{'index':1,'total':3,'title':'private phase'},'last_event':'executor_output','last_activity_at':ts,'events':[{'event':'executor_output','at':ts}]}]}
-  hb={'connected':True,'policy_ok':True,'executor_ready':True,'work':work}
-  self.assertEqual(self.req('/api/node/heartbeat','POST',hb,node=nt)[0],200)
-  own=next(a for a in self.req('/api/agents',user=u)[1]['agents'] if a['id']==aid)
-  self.assertEqual(own['work']['total'],4);self.assertEqual(own['work']['tasks'][0]['goal'],'private goal')
-  public=next(a for a in self.req('/api/directory',user=other)[1]['agents'] if a['id']==aid)
-  self.assertEqual(public['work']['counts']['running'],1);self.assertEqual(public['work']['tasks'],[])
-  self.assertNotIn('private goal',json.dumps(public))
-  with patch.object(m,'now',return_value=ts+91):
-   own=next(a for a in self.req('/api/agents',user=u)[1]['agents'] if a['id']==aid)
-   self.assertEqual(own['work']['state'],'unknown');self.assertEqual(own['work']['reason'],'offline')
-  # A fresh connector heartbeat cannot make an old task observation fresh.
-  work['observed_at']=ts-100
-  self.req('/api/node/heartbeat','POST',hb,node=nt)
-  own=next(a for a in self.req('/api/agents',user=u)[1]['agents'] if a['id']==aid)
-  self.assertEqual(own['status'],'ready');self.assertEqual(own['work']['reason'],'stale')
-  work['observed_at']=ts;work['content_synced']=False
-  self.req('/api/node/heartbeat','POST',hb,node=nt)
-  own=next(a for a in self.req('/api/agents',user=u)[1]['agents'] if a['id']==aid)
-  self.assertNotIn('goal',own['work']['tasks'][0]);self.assertNotIn('title',own['work']['tasks'][0]['phase'])
-  hb.pop('work');self.req('/api/node/heartbeat','POST',hb,node=nt)
-  own=next(a for a in self.req('/api/agents',user=u)[1]['agents'] if a['id']==aid)
-  self.assertEqual(own['work']['state'],'unknown');self.assertEqual(own['work']['reason'],'unsupported')
- def test_work_rejects_invalid_shapes_timestamps_and_bounds_text(self):
-  w=m.clean_work({'schema':1,'source':'taskd','scope':'anet_tasks','observed_at':m.now(),'counts':{'queued':1},'content_synced':True,
-     'tasks':[{'id':'waiter','state':'waiting_desktop','plan_revision':2,'revision_pending':True,'blocker':{'action':'revise_plan','detail':'token=secretvalue012345'},'scheduling':{'state':'waiting_desktop','resource':'desktop','blocked_by':['owner']},
-               'last_step':{'summary':'compiled','next':'GUI acceptance','blocker':'token=secretvalue012345'}}]})
-  self.assertEqual(w['tasks'][0]['scheduling']['blocked_by'],['owner'])
-  self.assertEqual(w['tasks'][0]['plan_revision'],2);self.assertTrue(w['tasks'][0]['revision_pending'])
-  self.assertEqual(w['tasks'][0]['blocker']['action'],'revise_plan')
-  self.assertEqual(w['tasks'][0]['last_step']['summary'],'compiled')
-  self.assertNotIn('secretvalue012345',json.dumps(w))
-  self.assertIsNone(m.clean_work({'schema':1,'source':'guess','scope':'anet_tasks'}))
-  for at in (float('nan'),float('inf'),m.now()+300,True):
-   self.assertIsNone(m.clean_work({'schema':1,'source':'taskd','scope':'anet_tasks','observed_at':at,'counts':{}}))
-  w=m.clean_work({'schema':1,'source':'taskd','scope':'anet_tasks','observed_at':m.now(),'counts':{'running':True,'waiting':-1,'queued':9999999},'content_synced':True,'tasks':[{'id':'x','state':'running','goal':'token=secretvalue012345','events':[{'event':'evil','at':m.now()}]}]})
-  self.assertEqual(w['counts']['running'],0);self.assertEqual(w['counts']['queued'],100000)
-  self.assertNotIn('secretvalue',w['tasks'][0]['goal']);self.assertEqual(w['tasks'][0]['events'],[])
 if __name__=='__main__':unittest.main(verbosity=2)

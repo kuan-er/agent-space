@@ -1,8 +1,10 @@
 Agent Space and taskd
 Copyright 2026 kuan-er and contributors.
 
-The taskd and agent-portal implementations are licensed under Apache-2.0.
+The Agent Space clients, taskd and portal implementations are licensed under Apache-2.0.
 ANet is an external dependency and a project of Agent Network Research.
 The material in patches/anet is distributed under its separate ANet license;
 this Apache-2.0 license does not replace or relax that license.
+The code under client/cli/yaml is PyYAML 6.0.3, distributed under the MIT
+license reproduced in licenses/PyYAML.txt.
 Third-party names and marks belong to their respective owners.

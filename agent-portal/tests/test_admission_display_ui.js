@@ -1,0 +1,12 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
+const root=path.join(__dirname,'..'),src=fs.readFileSync(path.join(root,'static/app.js'),'utf8');
+const ctx={evidenceFresh:t=>t===100,evidenceTime:t=>'observed:'+t,evidenceFlag:(v,y,n)=>v===true?y:v===false?n:'未上报'};
+vm.createContext(ctx);vm.runInContext(src.slice(src.indexOf('function admissionExplanation('),src.indexOf('function executionReadiness(')),ctx);
+const make=extra=>({kind:'agent',last_seen:100,policy_ok:0,runtime:{admission:{schema:1,observed_at:100,portal_admission_configured:true,reason:'configuration_matches',existing_trust_count:1,...extra}}});
+const text=JSON.stringify(ctx.admissionExplanation(make()));
+for(const expected of ['配置匹配','认证与实际接收尚未实测','1 个身份','具体发起 AID'])assert.ok(text.includes(expected),expected);
+assert.ok(JSON.stringify(ctx.admissionExplanation({kind:'agent',policy_ok:0})).includes('不能从 policy_ok 推断'));
+assert.ok(JSON.stringify(ctx.admissionExplanation(make({observed_at:1}))).includes('已过期'));
+assert.equal(ctx.admissionExplanation({kind:'device'}).length,0);
+assert.ok(!src.includes('它现在接不了任务'));assert.ok(src.includes('不等于所有既有授权失效'));
+console.log('Policy zero remains distinct from existing-caller authorization and verified receipt');

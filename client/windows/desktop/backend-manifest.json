@@ -1,0 +1,352 @@
+{
+  "schema": "anet-reviewed-backend/1",
+  "release": "owned-source-product-r4",
+  "unchanged_from_frozen_r3": false,
+  "files": [
+    {
+      "path": "broker/src/broker.py",
+      "sha256": "6fd5265955a26360bd96dae4a9addda47d055c02fcc913720cf941b34f6a34e3",
+      "bytes": 24006
+    },
+    {
+      "path": "broker/src/launcher.py",
+      "sha256": "f05574d33eb2654c1dc3b4a3415cc31d18164f61b06cd35fad5f21a3d2660c1b",
+      "bytes": 3857
+    },
+    {
+      "path": "broker/src/taskd_adapter.py",
+      "sha256": "1e9dca7e9e645ef2062e2b473da381c3879682b89861d0be515c6789a832c05b",
+      "bytes": 4580
+    },
+    {
+      "path": "broker/src/winlocal.py",
+      "sha256": "b60d4d85f9076d63f456928aaec535b4935be4a031c1fab02037fba89ed3e913",
+      "bytes": 15873
+    },
+    {
+      "path": "broker/vendor/taskd/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "broker/vendor/taskd/__main__.py",
+      "sha256": "13a1a5b340cdcfc1902b62be90e508c7c71886000d5bf087e7854aadf09fb35e",
+      "bytes": 52
+    },
+    {
+      "path": "broker/vendor/taskd/activity.py",
+      "sha256": "f95bcf28ec18022d1b9ef6b3f3ef63d7f6040bb9d31bfc0bc667755e9fa26c36",
+      "bytes": 8665
+    },
+    {
+      "path": "broker/vendor/taskd/attachments.py",
+      "sha256": "b22d066fb40e6d9d6f3f95cf89035575b8a94bb767a98e0994b8cc2e5135b7a5",
+      "bytes": 11109
+    },
+    {
+      "path": "broker/vendor/taskd/binding.py",
+      "sha256": "125136aa57858e4c90d75fc15194071d94f42f54d8b179ceb2b46c9d8f8ed71c",
+      "bytes": 20616
+    },
+    {
+      "path": "broker/vendor/taskd/builtin.py",
+      "sha256": "afb51cadf8879b856f0ac4f21a7875000c12bdcaca930b6a3d7fe31b32db2848",
+      "bytes": 6169
+    },
+    {
+      "path": "broker/vendor/taskd/checkers/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "broker/vendor/taskd/checkers/base.py",
+      "sha256": "58b39c478d62808b770ded8ad5502ebf67055cc988befe95e8eb5488e31ce7d6",
+      "bytes": 2825
+    },
+    {
+      "path": "broker/vendor/taskd/checkers/eps_preflight.py",
+      "sha256": "a19f04428dee42cd8dc49e6ba197dd2ebf93d7b1f0a3d7f1fcd02bcd713591e0",
+      "bytes": 7303
+    },
+    {
+      "path": "broker/vendor/taskd/checkers/generic.py",
+      "sha256": "face0f921ab58da59d871bfe1e2370773daf283ce53d1138ce56dca38c8c4a9f",
+      "bytes": 11412
+    },
+    {
+      "path": "broker/vendor/taskd/checkers/windows_uia.py",
+      "sha256": "bb3d7bb6e4487c134c8073a33e785efa47fe399dd439bfc063f69d3b9d868552",
+      "bytes": 11809
+    },
+    {
+      "path": "broker/vendor/taskd/cli.py",
+      "sha256": "4a586d4a7302d79525c91de201d17c3a7571e107e3b84553793a8f49d8318e97",
+      "bytes": 41971
+    },
+    {
+      "path": "broker/vendor/taskd/delivery_receipts.py",
+      "sha256": "e873003e2e98a3b06f6f2b5f4ef271bb3b914c6f7a44289e6dba64df15d4d62a",
+      "bytes": 1244
+    },
+    {
+      "path": "broker/vendor/taskd/directory.py",
+      "sha256": "161c1b443f806dd29fbf198cc228010041f2dcaa78a512be4f96fa2b187131ea",
+      "bytes": 1379
+    },
+    {
+      "path": "broker/vendor/taskd/engine.py",
+      "sha256": "bb172576d22deff862ce28001db347c644b0975200f8a6015ee8f2d5692fe4b8",
+      "bytes": 111627
+    },
+    {
+      "path": "broker/vendor/taskd/execution_facts.py",
+      "sha256": "86ce4ccadef8b82c6c1d2a7072d77efa9db642853b9528000822822cf6c7fd1f",
+      "bytes": 2248
+    },
+    {
+      "path": "broker/vendor/taskd/executors/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "broker/vendor/taskd/executors/base.py",
+      "sha256": "fe8f648638b68c1e7f7af8b40fafe408491964645180d0fa1f431cc1cc00677a",
+      "bytes": 1517
+    },
+    {
+      "path": "broker/vendor/taskd/executors/codex.py",
+      "sha256": "2470f78787f30405cd2f928bf52332f59457defa4ea72b869c160a36a68f9e6a",
+      "bytes": 5604
+    },
+    {
+      "path": "broker/vendor/taskd/executors/command.py",
+      "sha256": "1f4670c37c72adf4e1b03e85da101b3294b17a5f5d95bce078d4c88ec364b8f3",
+      "bytes": 1734
+    },
+    {
+      "path": "broker/vendor/taskd/executors/native_codex.py",
+      "sha256": "e61195576fde9dda4d2813d9307721c4f66935047b7c111f682119dd1db9d061",
+      "bytes": 21956
+    },
+    {
+      "path": "broker/vendor/taskd/instructions.py",
+      "sha256": "5f929df6a16355957b1ebb4626a30a884a1ce5692c53bb83587d0a706c9aa4de",
+      "bytes": 3071
+    },
+    {
+      "path": "broker/vendor/taskd/lightweight.py",
+      "sha256": "7185bb9c106ef3c51cf3263c1650dee3a4fc9be16395e78366f96798be10645c",
+      "bytes": 15748
+    },
+    {
+      "path": "broker/vendor/taskd/maintenance.py",
+      "sha256": "8eaeae7932c3f0b43b17c6e7db9b507a8a45e24f338493752a7901319bc52f1d",
+      "bytes": 3922
+    },
+    {
+      "path": "broker/vendor/taskd/messages.py",
+      "sha256": "447e6e4202dd96682d7588b0cff18bac6b00c1edc71db5d0c89b2ec7d0b2f059",
+      "bytes": 3904
+    },
+    {
+      "path": "broker/vendor/taskd/milestones.py",
+      "sha256": "d2099ef8c0bc3f4f7380b27068102c8aedcfd17ce98564451d75e74cd3ed5aa1",
+      "bytes": 1665
+    },
+    {
+      "path": "broker/vendor/taskd/native.py",
+      "sha256": "6554cf07218ebbcdecf1e7fdbbf582f5b2de6a5ebcbba8eedbb794f4d69b7574",
+      "bytes": 12980
+    },
+    {
+      "path": "broker/vendor/taskd/platform/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "broker/vendor/taskd/platform/autostart.py",
+      "sha256": "b788d813946bde1830cf61633d932adce1b57f405eb8aa40e88b0cc4da09113e",
+      "bytes": 3152
+    },
+    {
+      "path": "broker/vendor/taskd/platform/locks.py",
+      "sha256": "d650e72f3e66dd9cfe4428acc1257cae7329845587adb6305ab01d992a6b8290",
+      "bytes": 1193
+    },
+    {
+      "path": "broker/vendor/taskd/platform/powershell.py",
+      "sha256": "b1c317e4377da29d134db18aff780cf77ba5ff07660f74170310d80e32f1c4f4",
+      "bytes": 1130
+    },
+    {
+      "path": "broker/vendor/taskd/platform/proc.py",
+      "sha256": "ebc3354582c88bcb5097380bcc0ca7f184d7f3ac9b1038440779712ad3838293",
+      "bytes": 4158
+    },
+    {
+      "path": "broker/vendor/taskd/probes/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "broker/vendor/taskd/probes/windows_desktop.py",
+      "sha256": "c764aaf353237bbd3d94a64c05c0af9fe8a937395badc78c18c92553e840ebc1",
+      "bytes": 2188
+    },
+    {
+      "path": "broker/vendor/taskd/prompts.py",
+      "sha256": "71eba614a8b3dbf58a285afb0840eadad9f8098a5be3f6280c868cb7f20b505a",
+      "bytes": 15828
+    },
+    {
+      "path": "broker/vendor/taskd/protocol.py",
+      "sha256": "7a27afcaa8f424ebebf5e3c1b5416a133a7e55a8b4e2bd35d391d6122478f9ee",
+      "bytes": 15900
+    },
+    {
+      "path": "broker/vendor/taskd/quick.py",
+      "sha256": "a0ea065f42058d9d74f0369728cae28957db226195e28a0ac584a8228ec9ae11",
+      "bytes": 10711
+    },
+    {
+      "path": "broker/vendor/taskd/recovery.py",
+      "sha256": "391234b0ff55cfc83c68e2adc736c85ac6f8f050bf239edd1093366452901602",
+      "bytes": 7010
+    },
+    {
+      "path": "broker/vendor/taskd/relay.py",
+      "sha256": "a92802f8bcf2b9848d6a55b87d79e2376105ee7850bc4aaafdaace3208332b4a",
+      "bytes": 15924
+    },
+    {
+      "path": "broker/vendor/taskd/requesters/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "broker/vendor/taskd/requesters/appserver.py",
+      "sha256": "25f3bbc64be0796a8acff8674f36f53308a214d5bf84f2472d38751826339905",
+      "bytes": 7719
+    },
+    {
+      "path": "broker/vendor/taskd/requesters/codex.py",
+      "sha256": "b4dee106b290db191e86a55e83968fc2fb74acb8b44f501a4e112ca9d8d94668",
+      "bytes": 12038
+    },
+    {
+      "path": "broker/vendor/taskd/requesters/guidance.py",
+      "sha256": "65dd8255ce8c4dfa20aae5f5fdcf86296230f39d3a751ffac7cfb9529b61a4bd",
+      "bytes": 7116
+    },
+    {
+      "path": "broker/vendor/taskd/requesters/notify.py",
+      "sha256": "ab3555173d33cacc681b0e8bb88e112f45428e899d083bef0a8ffc2822d8a126",
+      "bytes": 1316
+    },
+    {
+      "path": "broker/vendor/taskd/resources.py",
+      "sha256": "30c4486b6510287d6d65cd782359d38581a9cced31c01e1c85afcbbe64d9dfbb",
+      "bytes": 5984
+    },
+    {
+      "path": "broker/vendor/taskd/service.py",
+      "sha256": "c356043a1502d9aeb8d52e2ad709a329d32ad10d8bc4765ed206ef6467e082e3",
+      "bytes": 17979
+    },
+    {
+      "path": "broker/vendor/taskd/store.py",
+      "sha256": "3a7b7ccc495b5f9adeab73b7e182de9a283f5269e2e409f6a7dc3e527b40046b",
+      "bytes": 5412
+    },
+    {
+      "path": "broker/vendor/taskd/transports/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    {
+      "path": "broker/vendor/taskd/transports/anet.py",
+      "sha256": "0d43db906ce3ba72853515b3a922529662592303a4ea75244ae6fa2b6fb993fa",
+      "bytes": 11992
+    },
+    {
+      "path": "broker/vendor/taskd/update.py",
+      "sha256": "8bf6281c9837bfcdff3d5c1bdc49fafd14d3e8e4095680e0b4233a213b9f2607",
+      "bytes": 25880
+    },
+    {
+      "path": "desktop_controller.py",
+      "sha256": "a212b4de3c0f0e3eae774f27148a951296a9a721b8529d77320c89f515af0ef6",
+      "bytes": 14832
+    },
+    {
+      "path": "preflight.py",
+      "sha256": "e59346df4cd0807d9304ac3e5fcc93cf8f8ea78b21313a6d7b32622c569db1e7",
+      "bytes": 1797
+    },
+    {
+      "path": "product_controller.py",
+      "sha256": "373d686b98244d2b51f407d8ae4a3db695b6baf6466a5ddc6a037f680b52e4d2",
+      "bytes": 2173
+    },
+    {
+      "path": "release-policy.json",
+      "sha256": "45cf5edd683668e02c1168ca18cab0a703345cd3d0ab008791540d582d853a88",
+      "bytes": 283
+    },
+    {
+      "path": "src/owned_source_product/__init__.py",
+      "sha256": "f04b3a2886082dd47082052f06272bdc7bca74cb2730af7e51cb213a186792ab",
+      "bytes": 85
+    },
+    {
+      "path": "src/owned_source_product/adapter.py",
+      "sha256": "174465a936a10e172759439c0db8179326c911f9fd5ca1dd22cbff55c8117f0c",
+      "bytes": 5035
+    },
+    {
+      "path": "src/owned_source_product/controller.py",
+      "sha256": "1b7e2e7551faaa868d98d9f17780ced68064c5d06bc4dedab6623a45cb665be7",
+      "bytes": 6167
+    },
+    {
+      "path": "src/owned_source_product/ipc_windows.py",
+      "sha256": "b60d4d85f9076d63f456928aaec535b4935be4a031c1fab02037fba89ed3e913",
+      "bytes": 15873
+    },
+    {
+      "path": "src/owned_source_product/private_directory.py",
+      "sha256": "ce9943a7dc7712b57d35455b24842300e4797683c1717bca8b2af135bbcc693f",
+      "bytes": 6066
+    },
+    {
+      "path": "src/owned_source_product/profiles.py",
+      "sha256": "2bdf201224b144004bc34ce67334d9ac45c272a2e4602e2c6757432014a35cf0",
+      "bytes": 1739
+    },
+    {
+      "path": "src/owned_source_product/records.py",
+      "sha256": "23ebe842c378abb00f0df3e5e0c3be023063c1116268d97d97407a59155144de",
+      "bytes": 2497
+    },
+    {
+      "path": "src/owned_source_product/recovery.py",
+      "sha256": "8be16abbc6e7d43e3f2b74bd9c82c20d90abad71dd2a1ce0ba50205c6e5d53c1",
+      "bytes": 4073
+    },
+    {
+      "path": "src/owned_source_product/registry.py",
+      "sha256": "bc897a13ccf7f26c51afda15fb8e01c08929bc4c162cdeca428ff394c3672d90",
+      "bytes": 19340
+    },
+    {
+      "path": "src/owned_source_product/submissions.py",
+      "sha256": "f5584c032f7ae411333b7fe627475e97e205dbf2d750b6a03ab89c2f1e678647",
+      "bytes": 15284
+    },
+    {
+      "path": "src/owned_source_product/summaries.py",
+      "sha256": "931e26179d494358102e8c46b933acad38e0ec22021ada0429383d99d24a581f",
+      "bytes": 4692
+    }
+  ]
+}

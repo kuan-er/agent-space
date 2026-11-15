@@ -1,0 +1,22 @@
+{
+  "schema": "anet-upgrade-policy-regression-fixture/1",
+  "source_release": "0.2.0-preview.12",
+  "source_payload_manifest_sha256": "9eb0492a2797f76db641dd0c6c2f7b342896c8e30459ad6088553e6a32ff659c",
+  "harness_sources": {
+    "enabled": true,
+    "release_policy": {
+      "package_schema": "anet-harness-release-closure/2",
+      "package_sha256": "c5f95f9e8f4f252c4ee61a39e0a5b03040830bd593e0af18cbb3e5bca84997c7",
+      "service_exe_sha256": "d718435b892db4ad5b547d12fec61be7baa7faf7a58d857ea58053be24c7a000"
+    }
+  },
+  "owned_sources": {
+    "enabled": true,
+    "release_policy": {
+      "broker_script_sha256": "6fd5265955a26360bd96dae4a9addda47d055c02fcc913720cf941b34f6a34e3",
+      "broker_exe_sha256": "d718435b892db4ad5b547d12fec61be7baa7faf7a58d857ea58053be24c7a000",
+      "codex_exe_sha256": "9d563ee4e0441ff9d59d612013e0460ddf8e5709735c2d9f6b98b7ef8ca4eb42"
+    }
+  },
+  "note": "Exact nonsecret release policy tuples from immutable preview.12 payload; lifecycle test file tree is a finite synthetic fixture."
+}

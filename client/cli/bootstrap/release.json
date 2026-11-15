@@ -1,0 +1,34 @@
+{
+  "schema": "anet-config-release/1",
+  "version": "0.3.0-preview.2",
+  "channel": "preview",
+  "downloads": [
+    {
+      "id": "macos-arm64",
+      "name": "anet-config-0.3.0-preview.2-macos-arm64.tar.gz",
+      "bytes": 125764243,
+      "sha256": "62497acef71058aeff45bf34d2fef299ce40a3137eef951dc70131cacea59e0a",
+      "minimum_os": "macOS 13.5 或更新版本 · Apple Silicon",
+      "url": "/downloads/anet-config/0.3.0-preview.2/anet-config-0.3.0-preview.2-macos-arm64.tar.gz"
+    },
+    {
+      "id": "linux-amd64",
+      "name": "anet-config-0.3.0-preview.2-linux-amd64.tar.gz",
+      "bytes": 153391005,
+      "sha256": "472316aaf3b1697ecd8f449eb5f12d02dd276a4ec17d12f6beadec401ef55515",
+      "minimum_os": "glibc 2.34 或更新版本 · x86_64",
+      "url": "/downloads/anet-config/0.3.0-preview.2/anet-config-0.3.0-preview.2-linux-amd64.tar.gz"
+    },
+    {
+      "id": "source",
+      "name": "anet-config-0.3.0-preview.2-macos-linux.tar.gz",
+      "bytes": 455406,
+      "sha256": "e6150b2f7392b812509bf4203956d4c430557b7d49cf2e89e5a0ffcce162d7c7",
+      "minimum_os": "macOS / Linux · Python 3.11+ 与 OpenSSH ssh-keygen",
+      "url": "/downloads/anet-config/0.3.0-preview.2/anet-config-0.3.0-preview.2-macos-linux.tar.gz"
+    }
+  ],
+  "bootstrap_url": "/downloads/anet-config/0.3.0-preview.2/install-anet.sh",
+  "checksums_url": "/downloads/anet-config/0.3.0-preview.2/SHA256SUMS",
+  "api_docs_url": "/docs/anet-api-v1.txt"
+}

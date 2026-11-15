@@ -1,0 +1,74 @@
+ANet 认证调用接口 v1
+
+在门户「API 访问」页面创建令牌，明确选择允许调用的智能体、读取/发送权限和
+7、30 或 90 天有效期。令牌只在创建时显示一次；服务器仅保留摘要。可随时撤销。
+
+基础地址：https://124.222.173.36:8888
+认证请求头：Authorization: Bearer <你的令牌>
+内容类型：Content-Type: application/json
+不要把令牌放进 URL、浏览器前端代码或公开仓库。
+
+GET /api/v1/agents
+  需要 chat:read。列出令牌允许访问且当前账户仍有权限的智能体。
+  can_chat=true 表示近期在线且接收任务已配置；不代表任何新请求已经执行。
+
+POST /api/v1/conversations
+  需要 chat:write。
+  请求：{"agent_id":"智能体编号","title":"可选标题"}
+  返回201：对话对象，其中 id 是后续使用的对话编号。
+
+POST /api/v1/conversations/{id}/messages
+  需要 chat:write。
+  请求：{"text":"你好，请介绍你能做什么。","idempotency_key":"每条新消息的UUID"}
+  返回202：消息编号和发送状态；这是接收请求，不是模型完成结果。
+  相同对话、相同编号、相同正文只对应一次发送；改正文必须使用新的编号。
+
+GET /api/v1/conversations/{id}
+  需要 chat:read。查询状态与消息列表；轮询此接口即可，无须重发消息。
+  messages 的 role 为 user/assistant/system，text 为原消息文字。
+  metadata 如有提供，将保留 anet.effect_status 和 anet.receipt_verified。
+  未提供的字段保持缺失，不补写为成功或已验证。
+
+GET /api/v1/conversations
+  需要 chat:read。只列出本账户在令牌所授权智能体中的对话。
+
+状态处理
+  sending / submitted / working：等待并查询原对话。
+  input-required：可在同一对话补充输入，沿用进行中的 ANet 任务。
+  completed：已结束，可继续追问；新一轮携带已有可见消息发起新的任务。
+  failed：检查系统消息及回执；不是成功结果。
+  unknown / unverified：调用结果尚未核实。保留对话和请求编号，不自动重发。
+
+上下文与限制
+  对话保存在门户。已结束的快速调用会用可见历史开启新任务，不声称恢复同一个
+  harness 原生会话。等待补充的任务继续使用原任务编号。
+  每条消息最多12000字符，每次HTTP请求最多60000字节。上下文达到限制时，
+  发送前明确拒绝，用户可以新建对话继续。每账户最多同时执行三个对话。
+  对话和令牌每次访问都会重新检查账户、智能体权限；撤销权限不会扩大访问范围。
+  取消接口尚未在此版本开放，不能把停止网页轮询当作取消远端执行。
+
+Python 标准库示例（令牌从环境读取，不写入程序）
+
+import json, os, uuid
+from urllib.request import Request, urlopen
+
+BASE = 'https://124.222.173.36:8888'
+TOKEN = os.environ['ANET_API_TOKEN']
+
+def call(path, data=None):
+    headers = {'Authorization': 'Bearer ' + TOKEN, 'Content-Type': 'application/json'}
+    body = json.dumps(data, ensure_ascii=False).encode() if data is not None else None
+    with urlopen(Request(BASE + path, data=body, headers=headers), timeout=40) as response:
+        return json.load(response)
+
+agents = call('/api/v1/agents')['agents']
+agent = next(a for a in agents if a['can_chat'])
+conversation = call('/api/v1/conversations', {'agent_id': agent['id']})
+request_id = str(uuid.uuid4())  # 先保存编号；网络超时后查询原对话
+accepted = call('/api/v1/conversations/' + conversation['id'] + '/messages',
+                {'text': '你好，请介绍你能做什么。', 'idempotency_key': request_id})
+result = call('/api/v1/conversations/' + conversation['id'])
+print(result)
+
+此示例只提交一次并查询一次。实际程序可继续查询 GET 接口直到状态改变；
+不要因为HTTP超时就产生新编号、重复提交同一业务意图。

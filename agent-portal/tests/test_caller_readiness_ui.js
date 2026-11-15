@@ -1,0 +1,30 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../static/app.js'),'utf8');
+const now=Date.now()/1000;
+const base={id:'original',aid:'original-public-aid',name:'Original sender',kind:'device',is_owner:true,enabled:1,node_connected:1,last_seen:now,status:'ready',send_ready:true,receive_ready:false,requester_ready:true};
+const upgrading={...base,kind:'agent',status:'policy_pending'};
+const receiver={...base,id:'receiver',aid:'receiver-public-aid',name:'Receiver',kind:'agent',status:'ready',receive_ready:true,long_task:false};
+const ctx={Date,Number,workspace:{devices:[],own:[],shared:[]},esc:x=>String(x),plainText:x=>String(x),icon:()=>'',stateInfo:()=>({tone:'warn',next:'check receiver'}),pill:()=>'',shortAid:x=>x,ago:()=>'',pipeline:()=>'',workSummary:()=>''};
+vm.createContext(ctx);
+vm.runInContext(source.slice(source.indexOf('function evidenceFresh('),source.indexOf('function workEvent(')),ctx);
+vm.runInContext(source.slice(source.indexOf('function sendReady('),source.indexOf('function byReadiness(')),ctx);
+vm.runInContext(source.slice(source.indexOf('function taskPrompt('),source.indexOf('async function openTask(')),ctx);
+ctx.workspace.devices=[base];assert.deepEqual(Array.from(ctx.callers(),x=>x.id),['original']);
+ctx.workspace.devices=[];ctx.workspace.own=[upgrading];
+assert.deepEqual(Array.from(ctx.callers(),x=>x.aid),['original-public-aid']);assert.equal(ctx.receiveReady(upgrading),false);
+ctx.workspace.own=[{...upgrading,status:'executor_pending'}];assert.equal(ctx.callers().length,1);
+for(const patch of [{node_connected:0},{enabled:0},{last_seen:now-100},{is_owner:false},{aid:null},{send_ready:false}]){
+ ctx.workspace.own=[{...upgrading,...patch}];assert.equal(ctx.callers().length,0,JSON.stringify(patch));
+}
+ctx.workspace.devices=[base];ctx.workspace.own=[upgrading,receiver];ctx.workspace.shared=[{...receiver,id:'shared',is_owner:false}];
+assert.ok(!ctx.catalog().some(x=>x.kind==='device'));
+assert.equal(ctx.receiveReady(base),false);assert.equal(ctx.receiveReady({...receiver,receive_ready:false}),false);
+assert.equal(ctx.receiveReady({...receiver,status:'policy_pending'}),false);assert.equal(ctx.receiveReady({...receiver,last_seen:now-100}),false);
+const prompt=ctx.taskPrompt(receiver,upgrading,{goal:'fixture only',mode:'quick'});
+assert.ok(prompt.includes('original-public-aid'));assert.ok(prompt.includes('receiver-public-aid'));
+for(const [target,caller] of [[base,upgrading],[upgrading,base],[receiver,{...upgrading,is_owner:false}],[receiver,{...upgrading,node_connected:0}]]) assert.throws(()=>ctx.taskPrompt(target,caller,{goal:'fixture only'}));
+const panel=ctx.executionReadiness(upgrading);assert.ok(panel.includes('发起入口可用'));assert.ok(panel.includes('尚未核验门户通用接收'));
+const mac=ctx.executionReadiness(base);assert.ok(mac.includes('仅发起设备，未启用接收任务'));assert.ok(!mac.includes('缺软件'));
+assert.ok(source.includes('if (!caller || !receiveReady(current))'));assert.ok(source.includes('id="d-send"'));
+assert.ok(!source.includes('这台电脑还没装 taskd，结果要在助手里自己查。'));
+console.log('Caller readiness: same identity survives receiver setup; offline/unowned identities and device/unready targets rejected; separate labels and submit recheck passed');

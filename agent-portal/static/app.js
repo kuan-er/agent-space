@@ -159,6 +159,7 @@ function clip(s, n) {
 
 function executorName(a) {
     if (a?.executor === "custom") return "自定义软件";
+    if (a?.executor === "claude") return "Claude Code";
     return (
         harnesses.find((h) => h.id === (a?.executor || "codex"))?.name ||
         "没选软件"
@@ -202,7 +203,7 @@ function stateInfo(a) {
               offline: [
                   "离线",
                   "off",
-                  "最近没有上报。",
+                  "没有近期节点连通确认；具体原因未提供。",
                   "看看那台电脑开着没、连接程序还在不在。",
               ],
               disabled: [
@@ -234,20 +235,20 @@ function stateInfo(a) {
               offline: [
                   "离线",
                   "off",
-                  "执行的电脑或连接程序不在线。",
+                  "没有近期节点连通确认；具体原因未提供。",
                   "看看那台电脑开着没。",
               ],
               policy_pending: [
-                  "缺权限",
+                  "门户独占策略待核验",
                   "warn",
-                  "电脑连上了，但还没开接任务的权限。",
-                  "复制排查说明，交给那台电脑上的助手。",
+                  "尚未确认门户独占准入；既有授权链路是否可用须按发起身份核对。",
+                  "查看节点上报、原任务接收记录及本机诊断；不要仅凭此状态扩大权限。",
               ],
               executor_pending: [
-                  "缺软件",
+                  "执行器待核验",
                   "warn",
-                  "运行软件还没配好，或者自检没过。",
-                  "到执行的电脑上把软件配好、跑一遍自检。",
+                  "节点尚未确认执行器就绪，不代表软件未安装。",
+                  "核对本机自检结果、执行器配置和状态更新时间；已有任务运行时不要贸然重装或重启。",
               ],
               disabled: [
                   "已停用",
@@ -276,9 +277,16 @@ function bigStatus(a) {
     const s = stateInfo(a);
     return `<span class="big-status ${s.tone}">${s.label}</span>`;
 }
+function sendReady(a) {
+    return !!a && a.send_ready === true && !!a.aid && (a.enabled === true || a.enabled === 1) &&
+        (a.node_connected === true || a.node_connected === 1) && evidenceFresh(a.last_seen);
+}
+function receiveReady(a) {
+    return !!a && a.kind === "agent" && a.receive_ready === true && a.status === "ready" && sendReady(a);
+}
 function callers() {
     return [...workspace.devices, ...workspace.own].filter(
-        (a) => a.status === "ready" && a.aid
+        (a) => a.is_owner === true && sendReady(a)
     );
 }
 function catalog() {
@@ -286,10 +294,10 @@ function catalog() {
         ...new Map(
             [...workspace.own, ...workspace.shared].map((a) => [a.id, a])
         ).values(),
-    ];
+    ].filter((a) => a.kind === "agent");
 }
 function readyAgents() {
-    return catalog().filter((a) => a.status === "ready");
+    return catalog().filter(receiveReady);
 }
 function recordApi(a) {
     return "/api/" + (a.kind === "device" ? "devices" : "agents");
@@ -336,7 +344,8 @@ function stepper(labels, current) {
 const NAV = [
     ["start", "总览", "radar"],
     ["directory", "智能体", "agent"],
-    ["assistant", "助手", "spark"],
+    ["chat", "直接对话", "agent"],
+    ["assistant", "门户助手", "spark"],
     ["mine", "我的连接", "plug"],
     ["guide", "帮助", "book"],
     ["members", "成员", "users"],
@@ -357,12 +366,12 @@ function shell() {
         <button class="sync" id="sync" title="刷新连接状态">${icon("refresh")}<span id="sync-time">${syncedAt ? clock(syncedAt) : ""}</span></button>
         <details class="account-menu"><summary aria-label="账户"><span class="avatar">${initials(me.name)}</span><span class="account-name">${esc(me.name)}</span></summary>
           <div class="menu"><p class="menu-head"><strong>${esc(me.name)}</strong><span>@${esc(me.username)} · ${me.role === "admin" ? "管理员" : "成员"}</span></p>
-          <button id="change-password">${icon("key")}修改密码</button><a href="/architecture.html">${icon("spark")}原理 ↗</a><button id="logout">${icon("logout")}退出</button></div>
+          <a href="/download">${icon("arrow")}下载客户端</a><a href="#api-access">${icon("key")}API 访问</a><button id="change-password">${icon("key")}修改密码</button><a href="/architecture.html">${icon("spark")}原理 ↗</a><button id="logout">${icon("logout")}退出</button></div>
         </details>
       </div>
     </div></header>
     <main class="page" id="content"></main>
-    <footer class="colophon"><span>AGENT SPACE</span><span>任务从你电脑上的助手发出，结果也回到那里</span><a href="#guide">帮助</a></footer>
+    <footer class="colophon"><span>AGENT SPACE</span><span>在你的智能体或门户中发起对话，保持连接</span><a href="/download">下载客户端</a><a href="/docs/anet-api-v1.txt">API 文档</a><a href="#guide">帮助</a></footer>
   </div>`;
     $("#logout").onclick = guard(async () => {
         await api("/api/auth/logout", "POST", {});
@@ -370,6 +379,7 @@ function shell() {
         me = null;
         workspace = { devices: [], own: [], shared: [] };
         clearDrafts();
+        directReset();
         history.replaceState(null, "", "/#login");
         authPage("login");
     });
@@ -2101,7 +2111,7 @@ function connectSender() {
 function capabilityTags(a) {
     if (!a.long_task) return "";
     const c = a.capabilities || {};
-    return `<div class="tags"><span class="tag accent">${icon("bolt")}长任务</span>${c.gui ? '<span class="tag">能操作界面</span>' : ""}${c.review ? '<span class="tag">有审查</span>' : ""}${c.max_hours ? `<span class="tag">最长 ${esc(c.max_hours)} 小时</span>` : ""}</div>`;
+    return `<div class="tags"><span class="tag accent">${icon("bolt")}长任务</span>${c.gui ? '<span class="tag">声明界面能力</span>' : ""}${c.review ? '<span class="tag">有审查</span>' : ""}${c.max_hours ? `<span class="tag">时长参数上限 ${esc(c.max_hours)} 小时</span>` : ""}</div>`;
 }
 function agentCard(a) {
     const s = stateInfo(a),
@@ -2109,7 +2119,7 @@ function agentCard(a) {
         setup = own && !a.aid;
     const main = setup
         ? ["setup", "继续连接"]
-        : a.status === "ready"
+        : receiveReady(a)
           ? ["dispatch", "派任务"]
           : ["details", "看看状态"];
     return `<article class="agent-card tone-${s.tone}" ${a.aid ? `data-card="${a.id}" title="点一下看详情"` : ""}>
@@ -2167,7 +2177,7 @@ function matchFilter(a, f) {
     return (
         f === "all" ||
         (f === "ready"
-            ? a.status === "ready"
+            ? receiveReady(a)
             : f === "long"
               ? a.long_task
               : f === "mine"
@@ -2234,8 +2244,8 @@ function checks(a) {
             "在线",
             !["pending", "bound", "offline", "disabled"].includes(a.status),
         ],
-        ["权限", !!a.policy_ok],
-        ["软件", !!a.executor_ready],
+        ["门户独占策略", !!a.policy_ok],
+        ["执行器", !!a.executor_ready],
     ];
 }
 function pipeline(a) {
@@ -2251,14 +2261,16 @@ function recordRow(a) {
           ? device
               ? ["to-directory", "去派任务", ""]
               : ["dispatch", "派任务", "primary"]
-          : ["details", "排查", "primary"];
+          : a.is_owner && sendReady(a)
+            ? ["to-directory", "去派任务", ""]
+            : ["details", "排查", "primary"];
     const next =
         a.status !== "ready"
-            ? s.next
+            ? sendReady(a) ? "发起连接可用；接收执行尚未就绪，可以继续向已就绪的智能体派任务。" : s.next
             : device
               ? a.requester_ready
-                  ? "在线，结果会回到原来的会话。"
-                  : "在线。装上 taskd 后，结果能自动回到原来的会话。"
+                ? "节点上报回传就绪；每个任务仍需确认原会话绑定和实际回传。"
+                  : "自动回传尚未确认，具体原因未提供；请核对本机回传状态。"
               : ago(a.last_seen);
     return `<article class="record tone-${s.tone}">
     <span class="mono-avatar ${device ? "device" : ""}">${icon(device ? "device" : "agent")}</span>
@@ -2496,6 +2508,78 @@ const WORK_LABELS = {idle:"空闲",running:"执行中",queued:"排队中",waitin
 const TASK_LABELS = {waiting_slot:"等待名额",waiting_desktop:"等待桌面",waiting_workspace:"等待工作目录",queued:"排队中",running:"执行中",accepted:"已接收",planning:"制定计划",verifying:"检查结果",awaiting_approval:"等待确认",needs_user:"等待你回答",blocked:"受阻"};
 const EVENT_LABELS = {accepted:"收到任务",planning:"开始制定计划",running:"开始执行阶段",verifying:"核验最终交付文件和要求",awaiting_approval:"等待确认",needs_user:"等待回答",blocked:"任务受阻",completed:"执行方结束任务",stopped:"任务停止",executor_started:"Agent 开始本轮工作",executor_output:"Agent 正在操作或生成回复",executor_finished:"Agent 本轮工作结束",checks_started:"程序正在核对文件或界面状态",checks:"程序核对结束（是否通过见结果）",checks_advanced:"有新的检查项通过",milestone_done:"已核验一个阶段内里程碑",phase_done:"本阶段要求已核验，推进下一阶段",plan:"计划已保存",step:"步骤报告已保存",review:"独立审查结束",replan:"重新规划",environment_wait:"等待执行环境恢复",interrupted:"上次执行被中断"};
 const PURPOSE_LABELS = {native_goal:"Agent 正在原生 Goal 中持续执行",planning:"Agent 正在制定或修订计划",execution:"Agent 正在执行当前操作",report_repair:"Agent 正在整理上一步报告",review:"独立审查 Agent 正在核验证据"};
+function evidenceFresh(at) {
+    return typeof at === "number" && Number.isFinite(at) && Date.now()/1000-at >= -30 && Date.now()/1000-at <= 90;
+}
+function evidenceTime(at) {
+    if (typeof at !== "number" || !Number.isFinite(at) || at <= 0) return "时间未提供";
+    return new Date(at*1000).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, " UTC") + (evidenceFresh(at) ? " · 近期上报" : " · 已过期，当前状态未验证");
+}
+function evidenceFlag(value, yes, no) {
+    return value === true || value === 1 ? yes : value === false || value === 0 ? no : "未上报";
+}
+function evidenceRows(rows) {
+    return `<dl class="work-tech">${rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join("")}</dl>`;
+}
+function admissionExplanation(a) {
+    if (a.kind === "device") return [];
+    const f=a.runtime?.admission;
+    if (!f || f.schema!==1) return [["门户接收路径配置","未上报；不能从 policy_ok 推断既有信任是否可用"]];
+    if (!evidenceFresh(a.last_seen) || !evidenceFresh(f.observed_at))
+        return [["门户接收路径配置","配置观察已过期；当前未验证"]];
+    const reasons={configuration_matches:"绑定身份、内部能力、门户地址及凭据文件引用匹配",configuration_unreadable:"配置无法核对",
+        capability_missing_or_ambiguous:"内部能力缺失或重复",binding_mismatch:"节点与门户绑定身份不一致",
+        live_capability_mismatch:"当前节点未报告对应准入能力",endpoint_mismatch:"实际能力地址或内部服务配置不匹配",
+        token_reference_mismatch:"凭据文件引用未匹配；没有读取凭据内容"};
+    const rows=[["门户接收路径配置",evidenceFlag(f.portal_admission_configured,"节点上报配置匹配；认证与实际接收尚未实测","节点上报配置未闭合")],
+        ["配置观察依据",(reasons[f.reason] || "原因未提供")+" · "+evidenceTime(f.observed_at)]];
+    if (Number.isInteger(f.existing_trust_count)) rows.push(["保留的既有信任",`${f.existing_trust_count} 个身份；须核对具体发起 AID，不能借给其它身份使用`]);
+    if (Number.isInteger(f.existing_allow_count)) rows.push(["保留的既有 allow",`${f.existing_allow_count} 个身份；仅是配置计数`]);
+    if (Number.isInteger(f.public_capabilities_count)) rows.push(["现有公开能力",`${f.public_capabilities_count} 项；不代表文本任务准入`]);
+    return rows;
+}
+function executionReadiness(a) {
+    const recent = evidenceFresh(a.last_seen), caps = a.reported_capabilities || a.capabilities || {}, native = caps.native;
+    const current = text => recent ? text : "未获得近期上报；当前未验证";
+    const reasons = {disabled_by_owner:"所有者未开启",native_probe_failed:"原生能力探测失败",adapter_has_no_verified_native_goals:"该适配器尚未验证原生 Goal",unavailable:"节点上报能力不可用"};
+    let goal = "未提供能力声明或实际验收，不能从执行器名称推断";
+    if (native && recent) {
+        goal = native.available === true
+            ? `节点声明原生能力可用；适配器：${native.harness || "未提供"}；持久会话：${evidenceFlag(native.persistent_session,"声明支持","声明不支持")}。仍需真实持续任务验收`
+            : native.available === false ? `节点声明原生能力不可用；${reasons[native.reason] || "具体原因未提供"}` : "原生能力是否可用未上报";
+    }
+    const rows = [
+        ["节点心跳", a.last_seen ? evidenceTime(a.last_seen) : "尚未收到心跳；原因未提供"],
+        ["节点连通", current(evidenceFlag(a.node_connected,"节点上报已连接","节点上报未连接；具体原因未提供"))],
+        ["发起连接", current(evidenceFlag(a.send_ready,"发起入口可用；目标仍须授权且接收就绪","发起入口尚未就绪；核对绑定、启用和连接状态"))],
+        ["门户通用接收", a.kind === "device" ? "仅发起设备，未启用接收任务" : current(evidenceFlag(a.receive_ready,"接收就绪由节点上报；不等于任务已接受","尚未核验门户通用接收；既有授权路径须按发起身份另验"))],
+        ["门户独占策略", a.kind === "device" ? "此连接仅发起任务" : current(evidenceFlag(a.policy_ok,"节点上报符合门户独占准入；指定任务接收仍需另验","未确认符合门户独占准入；不等于所有既有授权失效"))],
+        ...admissionExplanation(a),
+        ["执行器", a.kind === "device" ? "此连接未要求接收执行" : `${a.executor || "未提供"} · ${current(evidenceFlag(a.executor_ready,"节点上报就绪；不证明已执行任务","未确认就绪；具体原因未提供"))}`],
+        ["taskd 运行声明", a.kind === "device" ? "不由此字段判断回传能力" : current(evidenceFlag(a.runtime?.taskd,"节点上报 taskd 运行；接收证据见具体任务","节点上报 taskd 未运行；具体原因未提供"))],
+        ["原生持续 Goal", a.kind === "device" ? "由接收执行的节点提供" : goal],
+        ["自动回传", current(evidenceFlag(a.requester_ready,"节点上报就绪；原会话绑定和完成回传仍逐任务核验","未确认就绪；具体原因未提供"))],
+        ["验收与交付", "需原任务的检查、文件接收和会话回传证据；心跳和就绪字段不能代替"],
+    ];
+    return `<section class="cap-box execution-readiness"><h3>对端执行准备</h3>${evidenceRows(rows)}<p class="hint">来源：连接程序最近心跳和节点能力声明。各项单独核对；没有原因时明确记为未提供。</p></section>`;
+}
+function taskExecutionEvidence(t) {
+    const events = Array.isArray(t.events) ? t.events : [];
+    const latest = name => events.filter(e => e.event === name && typeof e.at === "number").sort((a,b) => b.at-a.at)[0];
+    const accepted = latest("accepted"), started = latest("executor_started"), f = t.execution_facts;
+    const content = t.content?.schema === 1 ? t.content : null, fields = content?.fields || {};
+    const rawReason = content ? fields.diagnostic || fields.reason || fields.step_blocker : t.blocker?.detail || t.reason || t.last_step?.blocker;
+    const reasonText = plainText(rawReason, 300);
+    const reason = reasonText ? `${content?.older_than_status || content?.stale ? "历史正文，不代表当前原因 · " : ""}${reasonText}` : "具体原因未提供";
+    const rows = [
+        ["taskd 接收", accepted ? `已上报 accepted 事件 · ${evidenceTime(accepted.at)}` : t.state === "accepted" ? `状态上报 accepted · ${evidenceTime(t.last_activity_at)}` : "本次同步未提供接收事件；不从消息送达推断"],
+        ["执行器启动", started ? `已上报 executor_started 事件 · ${evidenceTime(started.at)}` : "本次同步未提供启动事件；不从运行标签推断"],
+        ["执行更新时间", f?.updated_at ? evidenceTime(f.updated_at) : "执行器事件时间未提供"],
+        ["等待或阻塞原因", reason],
+        ["结果验收 / 已交付", "未在此状态快照中验证；查看原任务检查报告和交付回执"],
+    ];
+    return `<details class="work-content" data-detail-key="execution-evidence"><summary>接收、执行与交付证据</summary>${evidenceRows(rows)}<p class="hint">事件来自执行端上报。历史事件不代表当前仍在执行；没有事件不证明从未执行。</p></details>`;
+}
 function workEvent(e) {
     const label = PURPOSE_LABELS[e.purpose];
     return label && e.event === "executor_started" ? label : label && e.event === "executor_finished" ? `本轮调用结束：${label.replace("正在", "")}` : EVENT_LABELS[e.event] || e.event;
@@ -2537,10 +2621,33 @@ function plainText(v, max = 140) {
     return t.length > max ? t.slice(0, max) + "…" : t;
 }
 function taskHeadline(t) {
-    const label = TASK_LABELS[t.state] || "执行中", p = t.phase;
-    const stage = p?.total ? `第 ${p.index}/${p.total} 阶段${p.title ? "「" + plainText(p.title, 30) + "」" : ""}` : "";
-    const verb = {running:"正在执行",planning:"正在制定计划",verifying:"正在检查结果",accepted:"刚接到任务",queued:"在排队，还没开始",awaiting_approval:"在等你确认",needs_user:"在等你回答",blocked:"遇到阻碍，停住了"}[t.state] || (t.state.startsWith("waiting_") ? label : "正在执行");
-    return stage && ["running","planning","verifying"].includes(t.state) ? `${verb} · ${stage}` : verb;
+    const f=t.execution_facts;
+    if (f?.stop?.resource_retained || /native_stop_unconfirmed|native_outcome_unknown/.test(String(t.reason || ""))) return "执行结果尚未确认；先核实原任务，不能盲目重派";
+    if (["awaiting_approval","needs_user","blocked"].includes(t.state)) return ({awaiting_approval:"等待用户确认",needs_user:"等待用户补充信息",blocked:"执行端上报任务受阻"})[t.state];
+    if (f?.route === "native" && evidenceFresh(f.updated_at)) {
+        if (f.goal_status === "paused") return "原生 Goal 已暂停；原因以原任务记录为准";
+        if (f.goal_status === "blocked") return "原生 Goal 上报受阻；查看具体原因";
+        if (["budget_limited","budgetLimited"].includes(f.goal_status)) return "原生 Goal 上报预算受限；查看原任务预算与执行记录";
+        if (f.last_event === "native/needsApproval") return "原生执行器正在等待用户确认";
+        if (f.retry?.reason === "model_at_capacity" && evidenceFresh(f.retry.at) && ["active",undefined].includes(f.goal_status)) return `模型容量不足，执行器上报重试中${Number.isInteger(f.retry.attempt) ? " · 第 "+f.retry.attempt+" 次" : ""}`;
+        if (f.goal_status === "complete") return "原生 Goal 上报结束；业务验收与交付仍需核验";
+    }
+    if (t.state === "running" && f?.updated_at && !evidenceFresh(f.updated_at)) return "任务记录为运行中；执行器事件已过期，当前状态待确认";
+    return ({running:"执行端上报运行中",planning:"执行端上报正在制定计划",verifying:"正在核验结果",accepted:"taskd 上报已接收，等待执行确认",queued:"正在排队",waiting_slot:"等待执行名额",waiting_desktop:"等待桌面空闲",waiting_workspace:"等待工作目录可用"})[t.state] || "当前执行状态待确认";
+}
+function readableTaskTitle(t) {
+    // A deterministic excerpt, never a generated claim about what was accomplished.
+    const raw = t.title || t.goal || (t.mode === "quick" ? "快速回复" : "任务");
+    return plainText(raw.replace(/\bix_[a-zA-Z0-9_-]+\b/g, "").replace(/\s+/g, " "), 48);
+}
+function taskNextAction(t) {
+    const reason = String(t.reason || "");
+    if (/native_stop_unconfirmed|native_outcome_unknown/.test(reason) || t.execution_facts?.stop?.resource_retained)
+        return "先核实原执行是否停止；不要重复派发或直接恢复。";
+    if (["awaiting_approval", "needs_user"].includes(t.state)) return "查看下方说明，由原调用方处理确认或补充信息。";
+    if (t.state === "blocked") return ({wait_for_connection:"等待远端恢复连接，再由原调用方核对原任务。",repair_configuration:"由原调用方修正配置并重新检查。",repair_program:"由原调用方修正程序后重新检查。",repair_failed_checks:"由原调用方核对未通过的验收项。",revise_plan:"由原调用方修订执行计划。"})[t.blocker?.action] || "由原调用方查看阻塞证据并处理；未确认前不要重复派发。";
+    if (t.state?.startsWith("waiting_") || t.state === "queued") return "等待资源；无需重复提交任务。";
+    return "等待执行结果；有新报告后核对交付与验收。";
 }
 function executionFacts(f) {
     if (!f || f.schema !== 1) return '<p class="hint">执行路由未上报（旧节点或尚未开始），不推断为原生 Goal。</p>';
@@ -2559,30 +2666,54 @@ function executionFacts(f) {
     }
     return `<p class="work-line">${parts.map(esc).join("<br>")}</p>`;
 }
+// These are the redacted, permission-filtered fields already synchronized by the node.
+// Do not call this a full log: legacy nodes cap goal/phase/report lengths upstream.
+function workContent(t) {
+    const c = t.content?.schema === 1 ? t.content : null, f = c?.fields || {};
+    const pick = (key, legacy) => c ? f[key] : legacy;
+    const fields = [["任务目标", pick("goal", t.goal)], ["当前阶段", pick("phase", t.phase?.title)],
+        ["当前里程碑", pick("milestone", t.phase?.milestone?.current)], ["最近步骤报告", pick("summary", t.last_step?.summary)],
+        ["下一步", pick("next", t.last_step?.next)], ["阻塞原因", pick("reason", t.reason)],
+        ["步骤阻塞说明", pick("step_blocker", t.last_step?.blocker)], ["阻塞诊断", pick("diagnostic", t.blocker?.detail)]];
+    const note = c ? `正文 v1 · ${workAge(c.observed_at)}观察${c.older_than_status ? "（早于最新状态快照，以下为历史正文；当前状态以卡片概览为准）" : c.stale ? "（较旧，不代表当前执行内容）" : ""}。${c.truncated?.length ? "部分字段超过传输上限，已截断。" : "本次上报字段未截断。"}单字段最多 16384 字、合计 32768 字；不是完整执行日志。`
+        : "以下保留节点已同步的原文。当前同步链路最多保留目标 500 字、阶段 160 字、步骤报告 1000 字；这不是完整执行日志。";
+    const present = fields.filter(([,v]) => typeof v === "string" && v.trim());
+    if (!present.length) return '<p class="hint">尚无已同步的任务正文或步骤报告；活动记录不包含执行输出。</p>';
+    return `<details class="work-content" data-detail-key="content"><summary>任务原文与报告 · ${present.length} 项</summary><p class="hint">${c?.older_than_status || c?.stale ? "以下是较旧的同步内容，不代表当前执行状态。" : "节点同步的原文，非完整执行日志。"}</p>${present.map(([label,value]) => `<details class="work-source-field" data-detail-key="field-${esc(label)}"><summary>${c?.older_than_status ? "历史 · " : ""}${esc(label)}</summary><div class="work-text">${esc(value)}</div></details>`).join("")}<details class="work-sync-info" data-detail-key="sync"><summary>同步范围与时间</summary><p class="hint">${esc(note)}</p></details></details>`;
+}
 function workTask(t) {
-    const tone = t.state==="blocked" ? "blocked" : ["needs_user","awaiting_approval"].includes(t.state) ? "waiting" : (t.state==="queued" || t.state.startsWith("waiting_")) ? "queued" : "running";
-    const done = plainText(t.last_step?.summary), next = plainText(t.last_step?.next), why = plainText(t.reason, 200);
+    const state = t.state || "unknown";
+    const tone = state === "blocked" ? "blocked" : ["needs_user","awaiting_approval"].includes(state) ? "waiting" : (state === "queued" || state.startsWith("waiting_")) ? "queued" : TASK_LABELS[state] ? "running" : "unknown";
+    const summary = plainText(t.last_step?.summary, 160), next = plainText(t.last_step?.next, 160);
+    const oldContent = t.content?.older_than_status || t.content?.stale;
     const tech = [
         `<dt>任务编号</dt><dd class="mono">${esc(t.id)}</dd>`,
-        `<dt>最近进展</dt><dd>${t.last_progress_at ? `${esc(EVENT_LABELS[t.progress_event] || "阶段推进")} · ${esc(workAge(t.last_progress_at))}` : "尚未记录到检查通过或阶段推进"}</dd>`,
+        `<dt>执行方式</dt><dd>${executionFacts(t.execution_facts)}</dd>`,
+        t.plan_revision ? `<dt>计划版本</dt><dd>${Number(t.plan_revision)}</dd>` : "",
+        t.phase?.total ? `<dt>当前阶段</dt><dd>${Number(t.phase.index)} / ${Number(t.phase.total)} · ${esc(plainText(t.phase.title, 180))}</dd>` : "",
+        `<dt>已核验进展</dt><dd>${t.last_progress_at ? `${esc(EVENT_LABELS[t.progress_event] || "阶段推进")} · ${esc(workAge(t.last_progress_at))}` : "尚未记录到检查通过或阶段推进"}</dd>`,
+        t.reason ? `<dt>原始阻塞原因</dt><dd>${esc(t.reason)}</dd>` : "",
         t.scheduling?.blocked_by?.length ? `<dt>占用任务</dt><dd class="mono">${t.scheduling.blocked_by.map(esc).join("、")}</dd>` : "",
-        t.events?.length ? `<dt>活动记录</dt><dd><ol>${[...t.events].reverse().map(e=>`<li>${esc(workEvent(e))} <time>${esc(workAge(e.at))}</time></li>`).join("")}</ol></dd>` : "",
-        t.timing ? `<dt>累计耗时</dt><dd>${Object.entries(t.timing).map(([k,v])=>`${esc(({planning:"规划",execution:"执行器（含思考、工具和等待）",report_repair:"报告整理",review:"审查",checks:"程序检查",resource_wait:"资源等待"})[k] || k)} ${Number(v.seconds).toFixed(1)} 秒 / ${Number(v.calls)} 次`).join("；")}</dd>` : "",
+        t.events?.length ? `<dt>活动记录</dt><dd><p class="hint">状态事件，不含完整执行输出。</p><ol>${[...t.events].reverse().map(e=>`<li>${esc(workEvent(e))} <time>${esc(workAge(e.at))}</time></li>`).join("")}</ol></dd>` : "",
+        t.timing ? `<dt>累计耗时</dt><dd>${Object.entries(t.timing).map(([k,v])=>`${esc(k)} ${Number(v.seconds).toFixed(1)} 秒 / ${Number(v.calls)} 次`).join("；")}</dd>` : "",
     ].join("");
-    return `<article class="work-task"><div class="work-heading"><strong>${esc(plainText(t.goal, 80) || (t.mode==="quick" ? "快速回复" : "长任务"))}</strong><span class="work-badge work-${tone}"><i></i>${TASK_LABELS[t.state] || "执行中"}</span></div>
-    <p class="work-now">${esc(taskHeadline(t))}<span class="hint"> · ${esc(workAge(t.last_activity_at))}有动静</span></p>
-    ${executionFacts(t.execution_facts)}
-    ${t.phase?.milestone?.total ? `<p class="work-line"><b>阶段内进展</b>已核验 ${Number(t.phase.milestone.done)}/${Number(t.phase.milestone.total)} 项${t.phase.milestone.current ? `；当前：${esc(plainText(t.phase.milestone.current))}` : ""}</p>` : ""}
-    ${t.last_event?.startsWith("executor_") && PURPOSE_LABELS[t.last_purpose] ? `<p class="hint">${esc(workEvent({event:t.last_event,purpose:t.last_purpose}))}</p>` : ""}
-    ${done ? `<p class="work-line"><b>刚完成</b>${esc(done)}</p>` : ""}${next ? `<p class="work-line"><b>接下来</b>${esc(next)}</p>` : ""}
-    ${t.plan_revision ? `<p class="hint">计划版本 ${Number(t.plan_revision)}</p>` : ""}${t.revision_pending ? `<p class="hint">计划修订待当前步骤结束后应用</p>` : ""}${t.blocker?.action ? `<p class="work-reason">建议处理：${esc(({revise_plan:"修订执行计划",repair_configuration:"修正配置并重新预检",repair_program:"修正程序后重新解析",collect_compiler_diagnostics:"保存原生编译日志并诊断",retry_receive:"重新接收并校验文件",repair_failed_checks:"修复未通过的验收项",wait_for_connection:"等待远端恢复连接"})[t.blocker.action] || "检查阻塞证据")}</p>` : ""}${why ? `<p class="work-reason">${esc(why)}</p>` : ""}
-    ${t.attention ? '<p class="work-alert">可能卡住了：一直没有新进展，或这一步已超过预期时间。建议看一眼执行记录。</p>' : ""}
-    <details class="work-timeline"><summary>技术详情</summary><dl class="work-tech">${tech}</dl></details></article>`;
+    return `<article class="work-task" data-task-id="${esc(t.id)}"><div class="work-heading"><strong>${esc(readableTaskTitle(t))}</strong><span class="work-badge work-${tone}"><i></i>${TASK_LABELS[state] || "状态未知"}</span></div>
+    <p class="work-now">${esc(taskHeadline(t))}</p>
+    <p class="work-activity">最近活动：${esc(workAge(t.last_activity_at))}<span>活动不等于成果验收通过</span></p>
+    ${summary ? `<p class="work-line"><b>${oldContent ? "历史报告" : "执行方报告"}</b>${esc(summary)}</p>` : '<p class="work-line work-muted">暂无步骤结果报告</p>'}
+    <p class="work-next"><b>下一步</b>${esc(taskNextAction(t))}</p>
+    ${next ? `<p class="work-line"><b>${oldContent ? "历史计划" : "执行方计划"}</b>${esc(next)}</p>` : ""}
+    ${t.phase?.milestone?.total ? `<p class="work-line"><b>已核验</b>${Number(t.phase.milestone.done)} / ${Number(t.phase.milestone.total)} 项</p>` : ""}
+    ${t.revision_pending ? '<p class="hint">计划调整待当前步骤结束后生效</p>' : ""}
+    ${t.attention ? '<p class="work-alert">近期缺少进展，请核对执行记录。</p>' : ""}
+    ${workContent(t)}
+    ${taskExecutionEvidence(t)}
+    <details class="work-timeline" data-detail-key="technical"><summary>执行记录与技术详情</summary><dl class="work-tech">${tech}</dl></details></article>`;
 }
 function workPanel(a) {
     const state=workState(a), w=a.work || {}, tasks=w.tasks || [];
     if (state==="unknown") {
-        const why=w.reason==="offline" || a.status==="offline" ? "节点离线，无法确认当前工作。" : w.reason==="stale" || w.observed_at ? "工作状态已过期，等待新的执行端上报。" : "此节点尚未上报工作状态，需要支持状态上报的 taskd 和连接程序。";
+        const why=w.reason==="offline" || a.status==="offline" ? "节点离线，无法确认当前工作。" : w.reason==="stale" || w.observed_at ? "工作状态已过期，等待新的执行端上报。" : "此节点尚未上报工作状态；具体原因未提供，当前执行未验证。";
         return `<section class="cap-box work-panel"><h3>当前工作</h3>${workSummary(a)}<p class="hint">${why}</p></section>`;
     }
     return `<section class="cap-box work-panel"><div class="work-heading"><h3>当前工作</h3><span class="hint">${esc(workAge(w.observed_at))}更新</span></div>${workSummary(a)}${!w.tasks_visible && w.total ? '<p class="hint">所有者未公开任务详情，只展示工作状态和数量。</p>' : ""}${tasks.map(workTask).join("")}${w.truncated ? '<p class="hint">任务较多，这里展示前 50 条；数量统计包含全部任务。</p>' : ""}${w.tasks_visible && !w.content_synced && w.total ? '<p class="hint">任务内容同步未开启，仅显示任务阶段和活动时间。</p>' : ""}<p class="hint">仅包含通过 ANet 接收的任务，由执行端上报；节点心跳不等于执行进展，Goal 完成不等于成果验收通过。</p></section>`;
@@ -2592,15 +2723,19 @@ function pollWork(a) {
     workPoll=setInterval(async()=>{
         const root=$("#work-live");
         if (!root || !modal.open) {clearInterval(workPoll);return;}
+        const cachedReadiness=$("#execution-readiness-live");
+        if (cachedReadiness) cachedReadiness.innerHTML=executionReadiness(findRecord(a.id) || a);
         if (pending || document.hidden) return;
         pending=true;
         try {
             await refreshWorkspace();
             const current=findRecord(a.id);
             if (current && root.isConnected) {
-                const openIds=new Set($$(".work-task",root).filter(t=>$("details",t)?.open).map(t=>$(".mono",t)?.textContent));
+                const readiness=$("#execution-readiness-live");
+                if (readiness) readiness.innerHTML=executionReadiness(current);
+                const openDetails=new Set($$(".work-task",root).flatMap(t=> $$("details",t).filter(d=>d.open).map(d=>`${t.dataset.taskId}:${d.dataset.detailKey || d.className}`)));
                 root.innerHTML=workPanel(current);
-                $$(".work-task",root).forEach(t=>{if(openIds.has($(".mono",t)?.textContent) && $("details",t)) $("details",t).open=true;});
+                $$(".work-task",root).forEach(t=> $$("details",t).forEach(d=>{d.open=openDetails.has(`${t.dataset.taskId}:${d.dataset.detailKey || d.className}`);}));
             }
         } catch (e) {if(root.isConnected) root.innerHTML='<p class="hint">工作状态暂时无法刷新，请关闭后重试。</p>';}
         finally {pending=false;}
@@ -2610,7 +2745,7 @@ function pollWork(a) {
 const IX_STATES = {
     working: "进行中",
     submitted: "已提交",
-    completed: "完成",
+    completed: "执行方结束",
     failed: "失败",
     canceled: "已取消",
     rejected: "被拒绝",
@@ -2626,6 +2761,27 @@ function isoAgo(t) {
 }
 function peerLabel(i) {
     return i.peer_agent ? esc(i.peer_agent.name) : shortAid(i.peer);
+}
+
+function interactionEvidence(t) {
+    const e = t.evidence || {};
+    const values = {
+        "anet.delivery": ["pending", "confirmed", "unconfirmed"],
+        "anet.delivery_detail": ["not_sent", "sent", "queued_at_hub"],
+        "anet.effect_status": ["OK", "UNVERIFIED", "FAILED", "UNAVAILABLE", "PAYMENT_REQUIRED"],
+        "anet.receipt_verified": ["verified", "unverified", "unknown"]
+    };
+    const value = key => values[key].includes(e[key]) ? e[key] : "未上报";
+    const row = (label, text) => `<dt>${label}</dt><dd>${esc(text)}</dd>`;
+    return `<section class="cap-box"><h3>交付证据</h3><dl class="work-tech">${
+        row("消息送达", value("anet.delivery")) +
+        row("消息传输详情", value("anet.delivery_detail")) +
+        row("效果状态", value("anet.effect_status")) +
+        row("回执校验", value("anet.receipt_verified")) +
+        row("执行器接收 / 实际执行", "当前对话同步未提供执行确认；查看原任务执行记录") +
+        row("业务验收", "未验证；需要 report.json 和逐项验收证据") +
+        row("文件实际交付 / 原会话回传", "未验证；附件名称和大小不是接收或回传证明")
+    }</dl><p class="hint">以上枚举值来自节点同步的 ANet metadata。门户没有独立校验回执签名；confirmed、OK 或 verified 均不能替代业务验收。执行方结束后，交付失败只补交付，先查询原任务，不重跑业务。</p></section>`;
 }
 
 async function interactions(a) {
@@ -2693,12 +2849,12 @@ async function interactions(a) {
             box.scrollHeight - box.scrollTop - box.clientHeight < 40;
         const who = (m) =>
             m.sender === "me" ? esc(a.name) : peerLabel(d.interaction);
-        box.innerHTML =
+        box.innerHTML = interactionEvidence(d.interaction) +
             `<div class="ix-msg"><header>任务目标 · ${d.interaction.role === "inbound" ? "对方发给它" : "它发给对方"}</header>${esc(d.interaction.goal)}</div>` +
             d.messages
                 .map(
                     (m) =>
-                        `<div class="ix-msg ${m.sender}"><header>${who(m)} · ${esc(isoAgo(m.created_at))}</header>${esc(m.body)}${m.attachments.map((f) => `<span class="ix-file">${esc(f.name)}${f.size ? " · " + f.size + " B" : ""}</span>`).join("")}</div>`
+                        `<div class="ix-msg ${m.sender}"><header>${who(m)} · ${esc(isoAgo(m.created_at))}</header>${esc(m.body)}${m.attachments.map((f) => `<span class="ix-file">${esc(f.name)}${f.size != null ? " · " + f.size + " B" : ""} · 仅附件清单，需从原任务接收并核验哈希</span>`).join("")}</div>`
                 )
                 .join("");
         box.scrollTop = atBottom && !top ? box.scrollHeight : top;
@@ -2745,7 +2901,7 @@ function runtimeBox(a, owner) {
             ],
             ["执行方式", modes[r.mode] || r.mode || "未开启"],
             ["可读目录", owner ? (r.read_paths || []).join("、") : ""],
-            ["操作界面", r.gui ? "能操作这台电脑的图形界面" : ""],
+            ["操作界面", r.gui ? "节点声明界面能力；实际控制需单独验证" : ""],
             [
                 "不受信任的节点",
                 r.untrusted === "off" ? "不执行" : r.untrusted || "—",
@@ -2805,12 +2961,14 @@ async function workbuddyPanel(a) {
         if (!root.isConnected) return;
         const text = !status.configured
             ? "服务器尚未配置 WorkBuddy 官方应用，请联系管理员完成配置后再授权。"
+            : status.authorized && !status.local_assistant_scope
+              ? "当前授权不包含本地助理权限。请重新授权 WorkBuddy 本地助理，再运行本机连接检查。"
             : status.authorized
               ? "已授权。连接程序会按官方返回的有效期自动续期；如果授权被撤销，需要重新授权。"
               : status.state === "reauthorize"
                 ? "授权续期未完成。请重新授权；已发送任务请先在 WorkBuddy 核实，再决定是否重试。"
                 : "请由 WorkBuddy 账号本人完成官方网页授权，然后继续本机配置和自检。";
-        root.innerHTML = `<h3>WorkBuddy 授权</h3><p class="hint">${esc(text)}</p>${status.configured ? `<button class="btn ghost" id="wb-authorize">${status.authorized ? "重新授权" : "授权 WorkBuddy"}</button>` : ""}${status.authorized || status.state === "reauthorize" ? '<button class="btn ghost" id="wb-revoke">解除平台授权</button>' : ""}<button class="btn ghost" id="wb-refresh">刷新授权状态</button>`;
+        root.innerHTML = `<h3>WorkBuddy 本地助理授权</h3><p class="hint">${esc(text)}</p>${status.configured ? `<button class="btn ghost" id="wb-authorize">${status.authorized ? "重新授权" : "授权 WorkBuddy 本地助理"}</button>` : ""}${status.authorized || status.state === "reauthorize" ? '<button class="btn ghost" id="wb-revoke">解除平台授权</button>' : ""}<button class="btn ghost" id="wb-refresh">刷新授权状态</button>`;
         if ($("#wb-authorize")) $("#wb-authorize").onclick = guard(async () => {
             const result = await api(base + "/authorize", "POST", {});
             const url = new URL(result.url);
@@ -2846,20 +3004,21 @@ async function details(a) {
         ),
         body: `<div class="detail-top">${bigStatus(a)}<div><p class="detail-state"><strong>${esc(s.meaning)}</strong></p><p class="hint">${a.status === "ready" ? (device ? "可以从这里发任务。" : "干得怎么样，以助手里看到的结果为准。") : esc(a.is_owner ? "下一步：" + s.next : "找所有者恢复连接，或者先换一个。")}</p></div></div>
     ${pipeline(a)}
+    <div id="execution-readiness-live" aria-live="polite">${executionReadiness(a)}</div>
     <dl class="facts"><div><dt>归属</dt><dd>${esc(a.owner_name)}</dd></div><div><dt>谁能用</dt><dd>${device ? "只有我" : a.visibility === "private" ? "只有我" : "团队共享"}</dd></div><div><dt>最近</dt><dd>${esc(ago(a.last_seen))}</dd></div><div><dt>创建</dt><dd>${dateOf(a.created_at)}</dd></div></dl>
-    ${a.long_task ? `<section class="cap-box"><h3>${icon("bolt")}长任务 <span class="mono">taskd/1</span></h3><p>可按节点能力使用原生 Goal 或计划执行；实际路径见当前工作，成果由独立检查验收。${c.gui ? "能操作这台电脑上的图形界面。" : ""}${c.max_hours ? "单个任务最多 " + esc(c.max_hours) + " 小时" + (c.max_steps ? "、" + esc(c.max_steps) + " 步" : "") + "。" : ""}${c.review ? "程序判断不了的，交给另开的审查会话。" : ""}</p><p class="hint">支持的检查：${esc((c.checkers || []).join("、") || "—")}</p></section>` : ""}
+    ${a.long_task ? `<section class="cap-box"><h3>${icon("bolt")}长任务 <span class="mono">taskd/1</span></h3><p>节点声明可接收长任务；实际路由、持续运行和成果验收以具体任务证据为准。${c.gui ? "节点声明界面能力；实际控制需单独验证。" : ""}${c.max_hours ? "节点上报任务参数上限 " + esc(c.max_hours) + " 小时" + (c.max_steps ? "、" + esc(c.max_steps) + " 步" : "") + "。" : ""}${c.review ? "程序判断不了的，交给另开的审查会话。" : ""}</p><p class="hint">支持的检查：${esc((c.checkers || []).join("、") || "—")}</p></section>` : ""}
     ${!device ? `<div id="work-live" aria-live="polite">${workPanel(a)}</div>` : ""}
     ${runtimeBox(a, a.is_owner)}
-    ${a.is_owner && a.executor === "workbuddy" && a.aid ? '<section class="cap-box" id="workbuddy-auth"><h3>WorkBuddy 授权</h3><p class="hint">正在读取授权状态…</p></section>' : ""}
+    ${a.is_owner && (a.executor === "workbuddy" || a.kind === "device") && a.aid ? '<section class="cap-box" id="workbuddy-auth"><h3>WorkBuddy 授权</h3><p class="hint">正在读取授权状态…</p></section>' : ""}
     ${a.is_owner ? `<section class="cap-box"><h3>安装进度与诊断</h3><p class="hint" id="install-summary" data-record="${a.id}">正在读取安装诊断…</p><button class="btn ghost" id="d-install-logs">查看安装日志</button>${device ? '<button class="btn ghost" id="d-enable-executor">也让这台电脑接收任务</button>' : '<p class="hint">这条连接也可发任务，不需要单独再连接电脑。</p>'}</section>` : ""}
     ${a.aid ? `<details class="reveal"><summary>技术信息</summary><p class="hint">节点编号（AID），用来认这台电脑，平时用不到。</p><pre class="code">${esc(a.aid)}</pre><p class="hint"><a href="/windows-repair.md" target="_blank" rel="noopener">Windows 连接修复说明</a></p></details>` : ""}
-    <div class="form-actions">${a.is_owner ? '<button class="btn ghost" id="d-edit">编辑</button>' : ""}${!device && a.aid && (a.is_owner || a.visibility === "public") ? '<button class="btn ghost" id="d-ix">交互</button>' : ""}${a.is_owner && a.aid ? `<button class="btn ghost" id="d-repair">${icon("refresh")}继续安装 / 恢复连接</button>` : ""}${a.is_owner && !a.aid ? '<button class="btn primary" id="d-setup">继续连接</button>' : a.status === "ready" ? `<button class="btn primary" id="d-use">${device ? "去挑选" : "派任务"}${icon("arrow")}</button>` : !a.is_owner ? '<button class="btn primary" id="d-others">换一个</button>' : ""}</div>`,
+    <div class="form-actions">${a.is_owner ? '<button class="btn ghost" id="d-edit">编辑</button>' : ""}${!device && a.aid && (a.is_owner || a.visibility === "public") ? '<button class="btn ghost" id="d-ix">交互</button>' : ""}${a.is_owner && a.aid ? `<button class="btn ghost" id="d-repair">${icon("refresh")}继续安装 / 恢复连接</button>` : ""}${a.is_owner && !device && sendReady(a) && !receiveReady(a) ? '<button class="btn primary" id="d-send">继续发任务</button>' : ""}${a.is_owner && !a.aid ? '<button class="btn primary" id="d-setup">继续连接</button>' : (device ? sendReady(a) : receiveReady(a)) ? `<button class="btn primary" id="d-use">${device ? "去挑选" : "派给此执行端"}${icon("arrow")}</button>` : !a.is_owner ? '<button class="btn primary" id="d-others">换一个</button>' : ""}</div>`,
     });
     const bindIf = (id, fn) => {
         if ($(id)) $(id).onclick = guard(fn);
     };
     if (a.is_owner) installSummary(a);
-    if (a.is_owner && a.executor === "workbuddy" && a.aid) workbuddyPanel(a);
+    if (a.is_owner && (a.executor === "workbuddy" || a.kind === "device") && a.aid) workbuddyPanel(a);
     if (!device) pollWork(a);
     bindIf("#d-install-logs", () => installLogs(a));
     bindIf("#d-enable-executor", () => connectComputer(a));
@@ -2872,6 +3031,10 @@ async function details(a) {
         )
     );
     bindIf("#d-setup", () => pair(a));
+    bindIf("#d-send", () => {
+        modal.close();
+        go("directory");
+    });
     bindIf("#d-use", () => {
         modal.close();
         if (device) go("directory");
@@ -2919,7 +3082,9 @@ function lines(text) {
         .slice(0, 50);
 }
 function taskPrompt(target, caller, d) {
-    const identity = `请从这台电脑的 ANet 身份发起任务。先读 ANet guide 和目标 Agent Card，确认本机 AID 为 ${caller.aid}（${caller.name}），目标为 ${target.name}，AID 为 ${target.aid}。身份不一致时停止说明，不切换或覆盖身份。按现有权限和用户授权执行。`;
+    if (!receiveReady(target) || caller?.is_owner !== true || !sendReady(caller))
+        throw new Error("发起连接或接收执行状态已变化，请刷新后检查；未生成派工单。");
+    const identity = `请从这台电脑的 ANet 身份发起任务。先读 ANet guide 并核验本机身份，查询目标 Agent Card；若仅返回 NONE/无网络名片，不要把它当作密钥失效，也不要开启公开技能或入站来补名片。先用本机已配对门户的只读 /api/node/info 核对凭据所属 AID 与本机一致，再用 /api/node/directory 核对目标名称与完整 AID（目录观测时间须新鲜，心跳时效单独报告），并注明这是门户绑定记录，不是对方自签名片。目标密钥不新鲜、名片验证失败、目录不可用或映射不一致时停止说明；目录匹配不代表允许执行，仍须遵守目标授权策略。确认本机 AID 为 ${caller.aid}（${caller.name}），目标为 ${target.name}，AID 为 ${target.aid}。身份不一致时停止说明，不切换或覆盖身份。按现有权限和用户授权执行。`;
     if (!target.long_task || d.mode !== "long")
         return `${identity}\n\n目标：\n${d.goal}\n\n验收条件：\n${d.acceptance || "根据目标核对实际交付结果。"}\n\n限制：\n${d.constraints || "遵守已有授权范围。"}\n\n用 ANet send_message 发送给目标，记录任务 ID，按 wait_task 返回的实际状态继续处理。报告 anet.effect_status、anet.receipt_verified 及交付证据；不确定是否生效时先查询原任务，不重复发送。`;
     const spec = {
@@ -2945,7 +3110,7 @@ async function openTask(target) {
     target = catalog().find((a) => a.id === target.id);
     if (!target) throw new Error("这个智能体现在用不了，换一个吧。");
     const senders = callers(),
-        ready = target.status === "ready",
+        ready = receiveReady(target),
         draft = readDraft(target.id),
         long = target.long_task,
         canQuick =
@@ -2959,9 +3124,9 @@ async function openTask(target) {
         size: "wide",
         title: "派给 " + esc(target.name),
         sub: "写清楚要做什么、怎样算做完。下一步生成派工单。",
-        body: `<div class="route-card"><div class="route-end"><span class="route-label">从</span><select id="t-caller" ${senders.length ? "" : "disabled"} aria-label="从哪台电脑发">${senders.length ? senders.map((a) => `<option value="${a.id}" ${draft.caller === a.id ? "selected" : ""}>${esc(a.name)}${a.kind === "agent" ? "（智能体连接）" : ""}</option>`).join("") : "<option>还没有能发任务的电脑</option>"}</select></div><span class="route-arrow" aria-hidden="true"></span><div class="route-end"><span class="route-label">到</span><strong>${esc(target.name)}</strong><small>${esc(executorName(target))}${long ? " · 长任务" : ""}${long && target.capabilities.gui ? " · 能操作界面" : ""}</small></div>${led(target)}</div>
+        body: `<div class="route-card"><div class="route-end"><span class="route-label">从</span><select id="t-caller" ${senders.length ? "" : "disabled"} aria-label="从哪台电脑发">${senders.length ? senders.map((a) => `<option value="${a.id}" ${draft.caller === a.id ? "selected" : ""}>${esc(a.name)}${a.kind === "agent" ? "（智能体连接）" : ""}</option>`).join("") : "<option>还没有能发任务的电脑</option>"}</select></div><span class="route-arrow" aria-hidden="true"></span><div class="route-end"><span class="route-label">到</span><strong>${esc(target.name)}</strong><small>${esc(executorName(target))}${long ? " · 长任务" : ""}${long && target.capabilities.gui ? " · 声明界面能力" : ""}</small></div>${led(target)}</div>
     <p class="hint" id="return-hint"></p>
-    ${!ready ? `<div class="banner">${icon("clock")}<div><strong>它现在接不了任务</strong><p>${esc(stateInfo(target).meaning)}</p></div></div>` : ""}
+    ${!ready ? `<div class="banner">${icon("clock")}<div><strong>尚未核验此发起身份的接收路径</strong><p>${esc(stateInfo(target).meaning)}</p><p>保留既有授权；先核对具体发起身份，不自动修改策略。</p></div></div>` : ""}
     ${!senders.length ? `<div class="banner">${icon("device")}<div><strong>还没有能发任务的电脑</strong><p>先连上一台。写好的内容会留着。</p></div><button class="btn" id="t-connect">${existing ? "接着连" : "去连接"}</button></div>` : ""}
     <form id="task-form" class="form">
       ${long && canQuick ? `<fieldset class="mode-switch"><legend>怎么办这件事</legend><label class="${mode === "quick" ? "on" : ""}"><input type="radio" name="t-mode" value="quick" ${mode === "quick" ? "checked" : ""}><strong>快速问答</strong><small>一问一答，几十秒到几分钟，不用写验收条件。</small></label><label class="${mode === "long" ? "on" : ""}"><input type="radio" name="t-mode" value="long" ${mode === "long" ? "checked" : ""}><strong>长任务</strong><small>分步执行，有验收条件和证据，可以跑几小时。</small></label></fieldset>` : ""}
@@ -2988,8 +3153,8 @@ async function openTask(target) {
         $("#return-hint").textContent =
             long && mode === "long"
                 ? c?.requester_ready
-                    ? "结果会自动回到你发任务的那个会话。"
-                    : "这台电脑还没装 taskd，结果要在助手里自己查。"
+                    ? "节点上报回传就绪；发送前仍需核对原会话绑定，交付后核对实际回执。"
+                    : "自动回传尚未确认，具体原因未提供；可以发起任务，并从原任务查询结果。"
                 : "结果在发任务的助手里看。";
     };
     returnHint();
@@ -3035,7 +3200,7 @@ async function openTask(target) {
             await refreshWorkspace();
             const current = catalog().find((a) => a.id === target.id),
                 caller = callers().find((a) => a.id === d.caller);
-            if (!caller || current?.status !== "ready")
+            if (!caller || !receiveReady(current))
                 throw new Error("连接状态变了，检查一下电脑和智能体再试。");
             if (Boolean(current.long_task) !== Boolean(long))
                 throw new Error(
@@ -3077,7 +3242,7 @@ function showWorkOrder(target, caller, d) {
       <dl><div><dt>目标</dt><dd id="wo-goal"></dd></div>${d.acceptance ? '<div><dt>验收</dt><dd id="wo-acc"></dd></div>' : ""}${d.constraints ? '<div><dt>限制</dt><dd id="wo-con"></dd></div>' : ""}${longMode ? `<div><dt>预算</dt><dd>最多 ${esc(d.hours)} 小时 · ${esc(d.steps)} 步 · taskd/1</dd></div>` : ""}</dl>
       <span class="wo-stamp" aria-hidden="true">待发送</span>
     </article>
-    <div class="copy-card"><button class="btn primary wide" id="wo-copy">${icon("copy")}复制派工单</button><p class="hint" id="wo-feedback" role="status">发出去以后记下任务 ID${longMode && caller.requester_ready ? "，结果会回到那个会话" : ""}。</p><details class="reveal"><summary>看全文${longMode ? "和任务规格" : ""}</summary><pre class="code" id="wo-prompt"></pre></details></div>
+    <div class="copy-card"><button class="btn primary wide" id="wo-copy">${icon("copy")}复制派工单</button><p class="hint" id="wo-feedback" role="status">发出去以后记下任务 ID${longMode && caller.requester_ready ? "，还需核对原会话绑定和回传回执" : ""}。</p><details class="reveal"><summary>看全文${longMode ? "和任务规格" : ""}</summary><pre class="code" id="wo-prompt"></pre></details></div>
     <div class="form-actions"><button class="btn ghost" id="wo-back">${icon("back")}返回修改</button><button class="btn" id="wo-done">完成</button></div>`,
     });
     $("#wo-goal").textContent = d.goal;
@@ -3166,6 +3331,7 @@ async function renderMembers() {
                   .join("")
             : '<p class="quiet-empty">还没有。</p>'
     }</div></section>`;
+    await workbuddyApplicationSettings();
     on("[data-act=copy-register]", "click", () =>
         copy(location.origin + "/#register")
     );
@@ -3188,6 +3354,34 @@ async function renderMembers() {
         await renderMembers();
         toast("已撤销", "ok");
     });
+}
+async function workbuddyApplicationSettings() {
+    const content = $("#content");
+    if (!content || me?.role !== "admin") return;
+    const section = document.createElement("section");
+    section.className = "panel";
+    section.id = "workbuddy-app-settings";
+    section.innerHTML = `<header class="panel-head"><h2>WorkBuddy 应用设置</h2><span class="hint" id="wb-app-state">正在读取配置状态…</span></header>
+      <div class="panel-body"><p class="hint">先在 <a href="https://open.workbuddy.cn/" target="_blank" rel="noopener">WorkBuddy 开放平台</a>创建第三方应用，用途为调用本人电脑上的 WorkBuddy 本地助理执行任务；授权列表选择 <code>user.localassistant.readable</code> 和 <code>user.localassistant.invokable</code>。<a href="https://open.workbuddy.cn/en/docs/third-party-app" target="_blank" rel="noopener">查看官方创建与审核步骤 ↗</a></p>
+      <form id="wb-app-form" class="form" autocomplete="off"><label>OAuth 回调地址<input value="https://124.222.173.36:8888/api/workbuddy/callback" readonly></label>
+      <label>Client ID<input name="client_id" required maxlength="256" autocomplete="off" placeholder="填写应用的 Client ID"></label>
+      <label>Client Secret<input name="client_secret" type="password" required maxlength="16384" autocomplete="new-password" placeholder="仅在这里填写，不要发到聊天"></label>
+      <p class="hint">密钥保存后不回显。应用审核启用后，每台连接的账号所有者还需在连接详情中授权本地助理，并在电脑上完成 WorkBuddy 登录与连接检查。</p>
+      <p class="form-error" role="alert"></p><div class="form-actions"><button type="submit" class="btn primary">保存应用配置</button></div></form></div>`;
+    content.append(section);
+    const show = status => {
+        if (!section.isConnected) return;
+        $("#wb-app-state").textContent = status.configured ? "应用配置已就绪" : "待配置：" + (status.missing.includes("client_id") ? "Client ID" : status.missing.includes("client_secret") ? "Client Secret" : "私有配置或回调地址");
+    };
+    try { show(await api("/api/admin/workbuddy-app")); }
+    catch(error) { if(section.isConnected) $("#wb-app-state").textContent = error.message; }
+    $("#wb-app-form").onsubmit = async event => {
+        event.preventDefault();const form=event.target;const data=Object.fromEntries(new FormData(form));
+        const button=$("[type=submit]",form);button.disabled=true;
+        try { show(await api("/api/admin/workbuddy-app","POST",data));form.reset();toast("WorkBuddy 应用配置已保存","ok"); }
+        catch(error) { formError(form,error); }
+        finally { data.client_secret="";form.elements.client_secret.value="";button.disabled=false; }
+    };
 }
 function resetLink(user) {
     openDialog({
@@ -3243,7 +3437,7 @@ function guideHtml() {
             "warn",
             "执行的电脑连上了，但还没开接任务的权限。复制排查说明给它的助手。",
         ],
-        ["缺软件", "warn", "运行软件没配好或者自检没过。到执行的电脑上处理。"],
+        ["执行器待核验", "warn", "节点尚未确认执行器就绪。核对本机自检结果、配置及状态更新时间，不要仅凭此提示重装；已有任务的实际进度以任务详情为准。"],
         ["离线", "off", "最近没上报。看看电脑开着没、连接程序还在不在。"],
         ["已停用", "off", "用不了，找所有者或管理员。"],
     ];
@@ -3340,11 +3534,17 @@ const TOOL_NOTE = {
 };
 const ACTION_STATE = {
     pending: "等你确认",
-    approved: "正在发送…",
-    sent: "已发送",
+    approved: "已确认，发送结果待核对",
+    unknown: "发送结果未知，请核对原操作",
+    sent: "本机已确认请求",
     rejected: "已取消",
-    failed: "没有发出",
+    failed: "发送准备失败",
 };
+
+function unresolvedDispatches(rows) {
+    if (!rows?.length) return "";
+    return `<section class="cap-box"><h3>待核对的发送操作</h3><p class="hint">以下操作可能已被对端收到。保留原编号，先在原发起节点只读查询；清空聊天不会清除这些记录。不要重发业务任务。</p>${rows.map(a => `<article class="chat-card"><strong>${esc(a.target_name || "原目标")}</strong><p>${esc(ACTION_STATE[a.status] || "结果待核对")}</p><p>原操作：<code>${esc(a.id)}</code><br>开始时间：${esc(a.started_at ? evidenceTime(a.started_at) : a.decided_at ? evidenceTime(a.decided_at) : "旧记录未提供")}<br>原任务：<code>${esc(a.task_id || "尚未取得任务编号；不能据此断言未发送")}</code></p><details><summary>核对依据</summary><p>原发起节点：<code>${esc(a.source_aid || "未提供")}</code><br>原目标节点：<code>${esc(a.target_aid || "旧记录未提供")}</code><br>请求内容 SHA-256：<code>${esc(a.payload_sha256 || "旧记录未提供")}</code><br>记录阶段：${esc(a.phase || "未提供")}</p></details></article>`).join("")}</section>`;
+}
 
 function assistantLog(v) {
     const find = (id) =>
@@ -3376,7 +3576,7 @@ function assistantLog(v) {
         return `<p class="chat-note ${d.kind === "error" ? "bad" : ""}">${esc(m.content)}</p>`;
     });
     if (v.busy) items.push('<p class="chat-note">助手在想…</p>');
-    return (
+    return unresolvedDispatches(v.unresolved) + (
         items.join("") ||
         `<div class="chat-empty"><p>可以问我哪些智能体在线、它们在哪个目录工作、底层是什么，也可以让我给它们发任务。</p><div class="chips">${["现在有哪些智能体可用？", "哪些智能体支持长任务？", "我的智能体最近在和谁交互？"].map((q) => `<button class="chip" data-ask="${q}">${q}</button>`).join("")}</div></div>`
     );
@@ -3555,7 +3755,7 @@ async function authPage(kind = "login", t = "") {
       <button class="btn primary wide" type="submit">${!register ? "登录" : reset ? "保存" : "注册"}${icon("arrow")}</button>
       <p class="auth-switch">${!register ? '没有账号？<a href="#register">注册</a>' : reset ? '<a href="#login">去登录</a>' : '已有账号？<a href="#login">登录</a>'}</p>
       ${!register ? '<p class="hint center">忘记密码，找管理员要重置链接。</p>' : ""}
-      <p class="auth-links"><a href="#guide">怎么用</a><a href="/architecture.html">原理 ↗</a></p>
+      <p class="auth-links"><a href="/download">下载客户端</a><a href="#guide">怎么用</a><a href="/architecture.html">原理 ↗</a></p>
     </form></section>
   </div>`;
     $("#pw-toggle").onclick = () => {
@@ -3633,12 +3833,119 @@ async function connectPage(t) {
     }
 }
 
+/* Direct conversations and scoped API credentials. This file is embedded into app.js. */
+const directView = { selected: null, drafts: new Map(), agents: [], threads: [], timer: null, generation: 0, submitting: false, polling: null };
+function directPendingKey(id) { return `anet-chat-pending:${me?.id || me?.username}:${id}`; }
+function directPending(id) { try { return JSON.parse(sessionStorage.getItem(directPendingKey(id)) || "null"); } catch { return null; } }
+function saveDirectPending(id, value) { if (value) sessionStorage.setItem(directPendingKey(id), JSON.stringify(value)); else sessionStorage.removeItem(directPendingKey(id)); }
+function directState(state) { return ({sending:"正在发送",submitted:"等待智能体回复",queued:"排队中",working:"正在回复",running:"正在回复",completed:"已回复",failed:"未完成",rejected:"请求未被接受",canceled:"已取消",cancelled:"已取消",unknown:"结果待确认",unverified:"结果待确认",input_required:"等待补充",'input-required':"等待补充",ready:"可继续对话",idle:"等待消息",offline:"离线",error:"需要处理"})[state] || "等待更新"; }
+function directBusy(thread) { return ["sending","submitted","working","running","unknown","unverified"].includes(thread.state); }
+function directTerminal(thread) { return ["completed","failed","canceled","cancelled","rejected"].includes(thread.state); }
+function directThreadState(thread) { return !directTerminal(thread)&&thread.progress?.label?thread.progress.label:thread.state==="completed"&&thread.response_available===false?"已结束，尚未收到回答":directState(thread.state); }
+function directUpdatedAt(value) { const date=new Date(typeof value==="number"?value*1000:value);return value&&!Number.isNaN(date.valueOf())?date.toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit",second:"2-digit"}):""; }
+function directControlMessage(message) {
+ // Compatibility for older stored responses. Only hide a complete protocol envelope
+ // bound to this message's task; user text and answers discussing TASKD remain visible.
+ if(message.role!=="assistant"||!message.task_id||typeof message.text!=="string")return false;
+ const match=message.text.trim().match(/^(?:(?:正在处理。|Working on it\.|正在核对同一次调用的结果；不会重复执行。)\s*)?TASKD\s+(\{[\s\S]*\})$/);if(!match)return false;
+ try{const value=JSON.parse(match[1]);return value.protocol==="taskd/1"&&value.task===message.task_id&&["queued","accepted","running","planning","verifying","blocked","needs_user","awaiting_approval"].includes(value.state);}catch{return false;}
+}
+function directSchedule(thread,generation,id,delay=2000) {
+ clearTimeout(directView.timer);directView.timer=null;
+ if(route==="chat"&&generation===directView.generation&&directView.selected===id&&(directBusy(thread)||directPending(id)||directView.submitting))directView.timer=setTimeout(()=>directPoll(generation,id),delay);
+}
+function directStop() { clearTimeout(directView.timer); directView.generation++; }
+function directReset() { directStop(); directView.selected=null;directView.drafts.clear();directView.threads=[];directView.agents=[];directView.submitting=false; }
+function directList() {
+ const list=$("#direct-thread-list");if(!list)return;
+ const markup=directView.threads.length?directView.threads.map(t=>`<button class="direct-thread ${t.id===directView.selected?"selected":""}" data-thread="${esc(t.id)}" ${t.id===directView.selected?'aria-current="true"':""}><strong>${esc(t.title||directView.agents.find(a=>a.id===t.agent_id)?.name||"对话")}</strong><span>${esc(directThreadState(t))}</span></button>`).join(""):`<p class="hint direct-list-empty">还没有对话。<br>选择一个在线智能体开始。</p>`;
+ if(list._directMarkup===markup)return;list._directMarkup=markup;list.innerHTML=markup;
+ on("[data-thread]","click",async el=>{directView.selected=el.dataset.thread;directList();await directOpen();},list);
+}
+async function renderDirectChat() {
+ directStop();const generation=directView.generation;
+ const [agents,threads]=await Promise.all([api("/api/chat/agents"),api("/api/chat/conversations")]);
+ if(route!=="chat"||generation!==directView.generation)return;
+ directView.agents=agents.agents||[];directView.threads=threads.conversations||[];
+ shell();$("#content").classList.add("direct-page");$("#content").innerHTML=pageHead("Direct chat","与智能体聊天","选择你的智能体，消息会直接发到它所在的设备。")+`<section class="direct-layout"><aside class="direct-sidebar" aria-label="对话列表"><button class="btn primary" id="direct-new">${icon("plus")}新建对话</button><a class="direct-assistant" href="#assistant">${icon("spark")}门户助手<small>帮你找智能体、安排任务</small></a><div id="direct-thread-list"></div></aside><section class="direct-main" id="direct-main" aria-label="当前对话"><div class="direct-empty"><span class="direct-empty-icon">${icon("agent")}</span><h2>开始一次直接对话</h2><p>选择有权限的在线智能体，告诉它你需要什么。</p><button class="btn ghost" id="direct-empty-new">选择智能体</button></div></section></section>`;
+ $("#direct-new").onclick=guard(directNew);$("#direct-empty-new").onclick=guard(directNew);directList();
+ if(directView.selected&&directView.threads.some(t=>t.id===directView.selected))await directOpen();
+}
+async function directNew() {
+ const result=await api("/api/chat/agents");directView.agents=result.agents||[];
+ openDialog({title:"选择智能体",sub:"消息直接发给所选智能体。",body:`<div class="direct-agent-choices">${directView.agents.length?directView.agents.map(a=>`<button class="direct-agent-choice" data-chat-agent="${esc(a.id)}" ${a.can_chat===true?"":"disabled"}><span>${icon("agent")}<strong>${esc(a.name)}</strong></span><small>${esc(a.can_chat===true?"● 在线，可对话":a.reason||"当前不可对话")}</small></button>`).join(""):'<p class="hint">暂无有权限且在线的智能体。请先连接设备，或联系所有者开放权限。</p>'}</div><p class="form-error" role="alert" id="direct-new-error"></p>`});
+ on("[data-chat-agent]","click",async el=>{if(el.disabled)return;$("#direct-new-error").textContent="";$$('[data-chat-agent]').forEach(b=>b.disabled=true);try{const thread=await api("/api/chat/conversations","POST",{agent_id:el.dataset.chatAgent});directView.threads.unshift(thread);directView.selected=thread.id;modal.close();directList();await directOpen(thread);}catch(error){$("#direct-new-error").textContent=error.message;directView.agents.forEach(a=>{const b=$(`[data-chat-agent="${CSS.escape(a.id)}"]`);if(b)b.disabled=a.can_chat!==true;});}},modal);
+}
+async function directOpen(initial) {
+ directStop();const generation=directView.generation,id=directView.selected;if(!id)return;
+ const thread=initial||await api("/api/chat/conversations/"+encodeURIComponent(id));if(generation!==directView.generation||route!=="chat")return;
+ const agent=directView.agents.find(a=>a.id===thread.agent_id);const title=agent?.name||thread.title||"智能体";
+ $(".direct-layout").classList.add("show-thread");$("#direct-main").innerHTML=`<header class="direct-heading"><button class="btn ghost direct-mobile-back" id="direct-back" aria-label="返回对话列表">${icon("back")}</button><div><p class="kicker">直接对话</p><h2>${esc(title)}</h2></div><button class="btn ghost" id="direct-refresh" aria-label="查询当前对话状态">${icon("refresh")}查询状态</button></header><div class="direct-messages" id="direct-messages" role="log" aria-live="polite" aria-relevant="additions text"></div><div class="direct-composer"><div class="direct-status" id="direct-status" role="status"></div><p class="form-error" id="direct-error" role="alert"></p><form id="direct-form"><label class="sr-only" for="direct-text">给${esc(title)}的消息</label><textarea id="direct-text" maxlength="12000" rows="3" placeholder="写下你的消息，Enter 发送，Shift+Enter 换行"></textarea><button class="btn primary" id="direct-send" type="submit">发送${icon("arrow")}</button></form><p class="hint">消息会在这个对话中继续。请在发送前确认所选智能体。</p></div>`;
+ $("#direct-back").onclick=()=>$(".direct-layout").classList.remove("show-thread");$("#direct-text").value=directView.drafts.get(id)||"";
+ $("#direct-text").oninput=e=>directView.drafts.set(id,e.target.value);
+ $("#direct-text").onkeydown=e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!$("#direct-send").disabled)$("#direct-form").requestSubmit();}};
+ $("#direct-form").onsubmit=e=>{e.preventDefault();directSend(id).catch(error=>{if($("#direct-error"))$("#direct-error").textContent=error.message;});};
+ $("#direct-refresh").onclick=guard(()=>directPoll(generation,id));
+ directDraw(thread);directSchedule(thread,generation,id);
+}
+function directDraw(thread) {
+ if(thread.id!==directView.selected||!$("#direct-messages"))return;
+ const pending=directPending(thread.id),messages=(thread.messages||[]).filter(m=>!directControlMessage(m));
+ if(pending&&messages.some(m=>m.idempotency_key===pending.key))saveDirectPending(thread.id,null);
+ const log=$("#direct-messages"),nearBottom=log.scrollHeight-log.scrollTop-log.clientHeight<70;
+ const html=messages.length?messages.map(m=>`<article class="direct-message ${m.role==="user"?"from-user":"from-agent"}"><div class="direct-message-label">${m.role==="user"?"你":m.role==="assistant"?"智能体":"状态"}</div><div class="direct-message-text">${esc(m.text)}</div>${m.state?`<small>${esc(m.state==="completed"&&m.role!=="assistant"?(m.role==="user"?"已发送":"已结束"):directState(m.state))}</small>`:""}</article>`).join(""):`<div class="direct-empty"><h3>向智能体打个招呼</h3><p>发出的消息和回复都会保留在这里。</p></div>`;
+ if(log._directHtml!==html){log._directHtml=html;log.innerHTML=html;if(nearBottom)log.scrollTop=log.scrollHeight;}
+ const unresolved=directPending(thread.id),busy=directBusy(thread)||!!unresolved||directView.submitting;
+ $("#direct-send").disabled=busy;
+ const updated=directUpdatedAt(thread.progress?.updated_at||thread.updated_at);
+ $("#direct-status").textContent=unresolved?"正在确认发送结果，会自动更新，请勿重复发送。":directThreadState(thread)+(busy?" · 自动更新中":"")+(updated?` · 最后更新 ${updated}`:"");
+ const row=directView.threads.find(t=>t.id===thread.id);if(row){row.state=thread.state;row.progress=thread.progress;row.response_available=thread.response_available;directList();}
+ // No cancel action is rendered until the server exposes a validated endpoint.
+}
+async function directPoll(generation,id) {
+ clearTimeout(directView.timer);if(route!=="chat"||generation!==directView.generation||directView.selected!==id)return;
+ const polling=`${generation}:${id}`;if(directView.polling===polling)return;directView.polling=polling;
+ const button=$("#direct-refresh");if(button)button.disabled=true;
+ let thread,delay=2000;
+ try{thread=await api("/api/chat/conversations/"+encodeURIComponent(id));if(generation!==directView.generation||route!=="chat")return;directDraw(thread);const error=$("#direct-error");if(error?._directPollingError){error.textContent="";error._directPollingError=false;}}
+ catch(error){if(generation!==directView.generation||route!=="chat")return;const field=$("#direct-error");if(field){field.textContent="暂时无法更新，连接恢复后会自动继续。请勿重复发送。";field._directPollingError=true;}thread={state:"unknown"};delay=5000;}
+ finally{if(directView.polling===polling)directView.polling=null;if(generation===directView.generation&&route==="chat"&&directView.selected===id){if(button)button.disabled=false;if(thread)directSchedule(thread,generation,id,delay);}}
+}
+async function directSend(id) {
+ const box=$("#direct-text");if(!box||directView.submitting||directPending(id)||$("#direct-send").disabled)return;
+ const text=box.value.trim();if(!text)return;const key=crypto.randomUUID();
+ saveDirectPending(id,{key});directView.submitting=true;$("#direct-send").disabled=true;$("#direct-status").textContent="正在发送…";$("#direct-error").textContent="";
+ try{await api("/api/chat/conversations/"+encodeURIComponent(id)+"/messages","POST",{text,idempotency_key:key});directView.drafts.set(id,"");if(directView.selected===id&&$("#direct-text"))$("#direct-text").value="";}
+ catch(error){if([400,401,403,404,413,422].includes(error.status)){saveDirectPending(id,null);if($("#direct-error"))$("#direct-error").textContent=error.message;}else if($("#direct-error"))$("#direct-error").textContent="发送结果尚未确认。请查询原请求状态，不要重复发送。";}
+ finally{directView.submitting=false;if(directView.selected===id&&route==="chat")await directPoll(directView.generation,id);}
+}
+
+async function renderAccessTokens() {
+ directStop();const generation=directView.generation;const [result,agents]=await Promise.all([api("/api/access-tokens"),api("/api/chat/agents")]);if(route!=="api-access"||generation!==directView.generation)return;
+ shell();$("#content").innerHTML=pageHead("API access","API 访问","为你的程序创建受限令牌，调用获授权的智能体。",'<button class="btn primary" id="token-new">创建令牌</button>')+`<section class="panel token-panel"><h2>访问令牌</h2><p class="hint">只开放所需智能体和权限。令牌到期或撤销后无法继续使用。</p><div class="token-list">${(result.tokens||[]).length?(result.tokens||[]).map(t=>`<article class="token-row"><div><h3>${esc(t.name)}</h3><code>${esc(t.prefix||"令牌")}${t.prefix?"…":""}</code><p>${esc((t.scopes||[]).map(s=>s==="chat:write"?"发送消息":"读取对话").join(" · "))}</p></div><div><span>${t.revoked?"已撤销":t.expired?"已过期":"有效"}</span><p>到期：${esc(tokenDate(t.expires_at))}</p><small>最近使用：${esc(t.last_used_at?tokenDate(t.last_used_at):"尚未使用")}</small></div><button class="btn ghost" data-revoke-token="${esc(t.id)}" ${t.revoked?"disabled":""}>撤销</button></article>`).join(""):'<div class="direct-empty"><h3>尚无令牌</h3><p>创建一个令牌，让你的程序接入 ANet。</p></div>'}</div></section><section class="panel token-panel"><h2>开始调用</h2><p class="hint">使用 HTTPS，通过 Authorization: Bearer 请求头传递令牌。不要把令牌放在网址里。</p><pre class="token-example">GET /api/v1/agents\nGET /api/v1/conversations\nPOST /api/v1/conversations\nGET /api/v1/conversations/{id}\nPOST /api/v1/conversations/{id}/messages</pre><p class="hint">继续对话时使用同一个会话编号。每条新消息使用唯一的 idempotency_key，查询状态时无需重发消息。</p></section>`;
+ $("#token-new").onclick=()=>tokenCreate(agents.agents||[]);
+ on("[data-revoke-token]","click",el=>{const id=el.dataset.revokeToken;openDialog({title:"撤销这个令牌？",sub:"使用该令牌的程序将无法继续访问 ANet。已有对话记录会保留。",body:'<p class="form-error" id="token-revoke-error" role="alert"></p><div class="form-actions"><button class="btn ghost" id="token-revoke-back">返回</button><button class="btn primary" id="token-revoke-confirm">确认撤销</button></div>'});$("#token-revoke-back").onclick=()=>modal.close();$("#token-revoke-confirm").onclick=async()=>{const b=$("#token-revoke-confirm");b.disabled=true;try{await api("/api/access-tokens/"+encodeURIComponent(id),"DELETE");modal.close();await renderAccessTokens();}catch(error){$("#token-revoke-error").textContent=error.message;b.disabled=false;}};});
+}
+function tokenDate(value) { if(!value)return "未提供";const d=new Date(typeof value==="number"?value*1000:value);return Number.isNaN(d.valueOf())?"未提供":d.toLocaleDateString("zh-CN"); }
+function tokenCreate(agents) {
+ openDialog({title:"创建访问令牌",sub:"仅选择这个程序需要的权限。",body:`<form id="token-create-form"><label>名称<input name="name" maxlength="60" required placeholder="例如：我的自动化脚本"></label><fieldset><legend>允许访问的智能体</legend>${agents.map(a=>`<label class="token-choice"><input type="checkbox" name="agents" value="${esc(a.id)}">${esc(a.name)}</label>`).join("")||'<p class="hint">没有可授权的智能体。</p>'}</fieldset><fieldset><legend>权限</legend><label class="token-choice"><input type="checkbox" name="scopes" value="chat:read">读取智能体与对话</label><label class="token-choice"><input type="checkbox" name="scopes" value="chat:write">创建对话和发送消息</label></fieldset><label>有效期<select name="expires"><option value="7">7 天</option><option value="30" selected>30 天</option><option value="90">90 天</option></select></label><p class="form-error" role="alert"></p><div class="form-actions"><button class="btn primary" type="submit">创建令牌</button></div></form>`});
+ const form=$("#token-create-form");form.onsubmit=async e=>{e.preventDefault();const button=$('[type="submit"]',form);if(button.disabled)return;const agent_ids=$$('input[name="agents"]:checked',form).map(el=>el.value),scopes=$$('input[name="scopes"]:checked',form).map(el=>el.value);if(!agent_ids.length||!scopes.length){formError(form,new Error("请选择至少一个智能体和一项权限。"));return;}button.disabled=true;try{const result=await api("/api/access-tokens","POST",{name:form.elements.name.value.trim(),agent_ids,scopes,expires_days:Number(form.elements.expires.value)});showCreatedToken(result.token);await renderAccessTokens();}catch(error){if(modal.open&&$("#token-create-form")){formError(form,new Error(error.status&&error.status<500?error.message:"创建结果尚未确认。请先关闭窗口并刷新令牌列表，避免重复创建。"));if(!error.status||error.status>=500)button.disabled=true;}}};
+}
+function showCreatedToken(token) {
+ if(typeof token!=="string"||!token)throw new Error("未收到可展示的令牌，请刷新令牌列表核对。");
+ openDialog({title:"令牌已创建",sub:"仅显示这一次。请保存到你的程序的安全配置中。",body:'<textarea id="token-secret" class="token-secret" rows="4" readonly aria-label="新建的访问令牌"></textarea><div class="form-actions"><button class="btn ghost" id="token-copy">复制令牌</button><button class="btn primary" id="token-done">已保存，关闭</button></div><p class="hint">不要把令牌写进公开代码、聊天记录或网址。</p>'});
+ $("#token-secret").value=token;$("#token-copy").onclick=guard(()=>copy($("#token-secret").value));$("#token-done").onclick=()=>modal.close();modal.addEventListener("close",()=>{const field=$("#token-secret");if(field)field.value="";modal.innerHTML="";},{once:true});token="";
+}
+
+
 /* ------------------------------------------------------------------ routing */
 
 const ROUTES = [
     "start",
     "directory",
     "assistant",
+    "chat",
+    "api-access",
     "agents",
     "devices",
     "guide",
@@ -3698,6 +4005,9 @@ async function load(fetchFirst = true) {
     const epoch = ++pageEpoch,
         current = route;
     clearTimeout(assistantTimer);
+    directStop();
+    if (current === "chat") { await renderDirectChat(); return; }
+    if (current === "api-access") { await renderAccessTokens(); return; }
     if (current === "guide") {
         renderGuide();
         return;
@@ -3744,7 +4054,7 @@ function beginRefresh() {
             ["INPUT", "TEXTAREA", "SELECT"].includes(
                 document.activeElement?.tagName
             ) ||
-            ["guide", "members", "assistant"].includes(route)
+            ["guide", "members", "assistant", "chat", "api-access"].includes(route)
         )
             return;
         const before = stable(workspace);

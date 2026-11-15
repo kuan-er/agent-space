@@ -8,10 +8,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import urlopen
 
+import portal_delivery_routes
+import desktop_release
+from portal_delivery import PortalDeliveries
+
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get('PORTAL_DATA', ROOT / '.data'))
 BASE = os.environ.get('PORTAL_URL', 'http://127.0.0.1:8890').rstrip('/')
-HUB = os.environ.get('ANET_HUB_URL', 'http://127.0.0.1:8088')
+HUB = os.environ.get('ANET_HUB_URL', 'https://124.222.173.36')
 HUB_LOCAL = os.environ.get('ANET_HUB_LOCAL', 'http://127.0.0.1:8088')
 HELPER = os.environ.get('PORTAL_HUB_HELPER', '')
 AID = re.compile(r'^b[a-z2-7]{40,100}$')
@@ -83,7 +87,13 @@ def init():
         CREATE TABLE IF NOT EXISTS assistant_actions(id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL,
           agent_id TEXT, args TEXT NOT NULL, status TEXT NOT NULL, result TEXT, created_at INTEGER NOT NULL, decided_at INTEGER);
         CREATE TABLE IF NOT EXISTS assistant_usage(user_id TEXT NOT NULL, day TEXT NOT NULL, calls INTEGER NOT NULL, PRIMARY KEY(user_id,day));
+        CREATE TABLE IF NOT EXISTS assistant_dispatch_attempts(action_id TEXT PRIMARY KEY REFERENCES assistant_actions(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL, kind TEXT NOT NULL, target_aid TEXT NOT NULL, source_aid TEXT,
+          source_data_ref TEXT NOT NULL, payload_sha256 TEXT NOT NULL, started_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL, phase TEXT NOT NULL, task_id TEXT);
         ''')
+        c.execute('CREATE TABLE IF NOT EXISTS interaction_evidence(agent_id TEXT NOT NULL, ix TEXT NOT NULL, evidence TEXT NOT NULL, PRIMARY KEY(agent_id,ix), FOREIGN KEY(agent_id,ix) REFERENCES interactions(agent_id,ix) ON DELETE CASCADE)')
+        PortalDeliveries.initialize(c)
         c.execute('CREATE TABLE IF NOT EXISTS install_reports(id TEXT PRIMARY KEY,agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,report TEXT NOT NULL)')
         # Additive migration: every existing record retains its executor role and identity.
         cols={r[1] for r in c.execute('PRAGMA table_info(agents)')}
@@ -96,6 +106,7 @@ def init():
         if 'runtime' not in cols:c.execute('ALTER TABLE agents ADD COLUMN runtime TEXT')
         if 'requester_ready' not in cols:c.execute('ALTER TABLE agents ADD COLUMN requester_ready INTEGER NOT NULL DEFAULT 0')
         if 'work' not in cols:c.execute('ALTER TABLE agents ADD COLUMN work TEXT')
+        if 'work_content' not in cols:c.execute('ALTER TABLE agents ADD COLUMN work_content TEXT')
         # SQLite cannot widen a CHECK in place. Rebuild only the old two-harness
         # schema, in this transaction, retaining every column and UNIQUE/FK rule.
         schema=c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").fetchone()[0]
@@ -163,22 +174,30 @@ def store_install_report(c,a,raw):
     return {'ok':True,'report_id':rid}
 
 def agent_view(a, owner, viewer=None):
-    keys=['kind','executor','id','name','description','visibility','aid','enabled','last_seen','policy_ok','executor_ready','created_at']
+    keys=['kind','executor','id','name','description','visibility','aid','enabled','last_seen','node_connected','policy_ok','executor_ready','created_at']
     v={k:a.get(k) for k in keys};v['owner_name']=owner;v['is_owner']=a.get('owner_id')==viewer
     if not a['enabled']: v['status']='disabled'
     elif not a['aid']: v['status']='pending'
     elif a.get('kind')=='device':
         v['status']='bound' if not a['last_seen'] else ('ready' if now()-a['last_seen']<=90 and a.get('node_connected') else 'offline')
-    elif not a['last_seen'] or now()-a['last_seen']>90:v['status']='offline'
+    elif not a['last_seen'] or now()-a['last_seen']>90 or not a.get('node_connected'):v['status']='offline'
     elif not a['policy_ok']:v['status']='policy_pending'
     elif not a['executor_ready']:v['status']='executor_pending'
     else:v['status']='ready'
     # A node running taskd declares what long tasks it takes (taskd/README.md); stale while offline.
     caps=long_task_caps(a.get('capabilities')) if a.get('kind')=='agent' and v['status']=='ready' else None
     v['long_task']=bool(caps);v['capabilities']=caps
+    # Declaration is separate from dispatch readiness. This does not grant access
+    # or claim that an executor actually accepted or completed any task.
+    recent=bool(a.get('last_seen') and 0<=now()-a['last_seen']<=90)
+    # Sender connectivity is independent of receiving execution policy. These
+    # display flags do not admit a caller or grant access to any receiving agent.
+    v['send_ready']=bool(a['enabled'] and a['aid'] and recent and a.get('node_connected'))
+    v['receive_ready']=bool(v['send_ready'] and a.get('kind')=='agent' and v['status']=='ready')
+    v['reported_capabilities']=long_task_caps(a.get('capabilities')) if a.get('kind')=='agent' and recent else None
     v['runtime']=runtime_view(a.get('runtime'),v['is_owner']) if a.get('kind')=='agent' and v['status'] in ('ready','policy_pending','executor_pending') else None
     v['share_content']=bool(a.get('share_content'));v['sync_at']=a.get('sync_at') if v['is_owner'] else None
-    v['requester_ready']=bool(a.get('requester_ready') and a.get('node_connected') and v['status']=='ready')
+    v['requester_ready']=bool(a.get('requester_ready') and v['send_ready'])
     if a.get('kind')=='agent':v['work']=work_view(a,v['status'],v['is_owner'])
     return v
 
@@ -242,6 +261,23 @@ def graph_links(c,u,members,refs):
         add(end(caller),[x[0],x[1]],t,False,not ok)
     return sorted(out.values(),key=lambda e:-e['at'])[:60]
 
+def clean_admission_facts(raw):
+    """Explanatory receiver observations only; never used to authorize a caller."""
+    if not isinstance(raw,dict) or raw.get('schema')!=1:return None
+    observed=raw.get('observed_at')
+    if type(observed) not in (int,float) or not 0<observed<=now()+30:return None
+    out={'schema':1,'observed_at':observed,'authentication':'not_probed'}
+    for key in ('portal_admission_configured','binding_match','live_capability_match','endpoint_match','token_reference_match'):
+        if type(raw.get(key)) is bool:out[key]=raw[key]
+    for key in ('existing_trust_count','existing_allow_count','public_capabilities_count'):
+        if type(raw.get(key)) is int and 0<=raw[key]<=100000:out[key]=raw[key]
+    if raw.get('transport') in ('https','unix','unknown'):out['transport']=raw['transport']
+    if raw.get('reason') in ('configuration_matches','configuration_unreadable','capability_missing_or_ambiguous',
+        'binding_mismatch','live_capability_mismatch','endpoint_mismatch','token_reference_mismatch'):
+        out['reason']=raw['reason']
+    return out
+
+
 def clean_runtime(raw):
     # Self-reported by the node: whitelist keys and bound every value; never trusted for access decisions.
     if not isinstance(raw,dict):return None
@@ -252,6 +288,8 @@ def clean_runtime(raw):
     if isinstance(raw.get('read_paths'),list):out['read_paths']=[str(h)[:300] for h in raw['read_paths'][:5]]
     for k in ('taskd','sync','auto_update','gui'):
         if isinstance(raw.get(k),bool):out[k]=raw[k]
+    admission=clean_admission_facts(raw.get('admission'))
+    if admission:out['admission']=admission
     return out or None
 
 def runtime_view(raw,is_owner):
@@ -262,6 +300,9 @@ def runtime_view(raw,is_owner):
         # Other members see the folder name and mode, not the owner's machine paths or network allow-list.
         if r.get('work_dir'):r['work_dir']=re.split(r'[\\/]+',r['work_dir'].rstrip('\\/'))[-1]
         r.pop('egress_allow',None);r.pop('read_paths',None)
+        if isinstance(r.get('admission'),dict):
+            for key in ('existing_trust_count','existing_allow_count','public_capabilities_count'):
+                r['admission'].pop(key,None)
     return r
 
 WORK_COUNTS=('running','queued','waiting','blocked')
@@ -318,6 +359,24 @@ def clean_execution_facts(raw, observed_now=None):
         out['stop'] = {k: stop[k] for k in ('requested', 'confirmed', 'resource_retained') if type(stop.get(k)) is bool}
     return out
 
+
+# Content protocol is separate from bounded heartbeat metadata. Never carries raw output.
+WORK_CONTENT_FIELDS = ('goal', 'phase', 'milestone', 'summary', 'next', 'reason', 'step_blocker', 'diagnostic')
+def clean_work_content(raw):
+    if not isinstance(raw, dict) or raw.get('schema') != 1 or not isinstance(raw.get('fields'), dict):
+        return None
+    remaining = 32768
+    fields, truncated = {}, []
+    for key in WORK_CONTENT_FIELDS:
+        value = raw['fields'].get(key)
+        if not isinstance(value, str): continue
+        value = redact(value)
+        limit = min(16384, remaining)
+        fields[key] = value[:limit]
+        if len(value) > limit or key in (raw.get('truncated') if isinstance(raw.get('truncated'), list) else []):
+            truncated.append(key)
+        remaining -= len(fields[key])
+    return {'schema': 1, 'fields': fields, 'truncated': truncated, 'field_limit': 16384, 'total_limit': 32768}
 
 def clean_work(raw):
     if not isinstance(raw,dict) or raw.get('schema')!=1 or raw.get('source')!='taskd' or raw.get('scope')!='anet_tasks':return None
@@ -380,6 +439,18 @@ def work_view(a,status,is_owner):
     if reason:return {'state':'unknown','reason':reason,'observed_at':work['observed_at'] if work else None,'tasks':[]}
     work['tasks_visible']=bool(is_owner or a.get('share_content'))
     if not work['tasks_visible']:work['tasks']=[]
+    elif work.get('content_synced'):
+        try: contents = json.loads(a.get('work_content') or '{}')
+        except (ValueError, TypeError): contents = {}
+        if isinstance(contents, dict):
+            for task in work['tasks']:
+                record = contents.get(task['id'])
+                if not isinstance(record, dict): continue
+                at = work_time(record.get('observed_at'))
+                content = clean_work_content(record.get('content'))
+                if at and content:
+                    task['content'] = dict(content, observed_at=at, stale=now()-at>300, older_than_status=at<work['observed_at'])
+
     return work
 
 SECRET=re.compile(r'(-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)|\bsk-[A-Za-z0-9_\-]{16,}|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=\-]{16,}|\b(?:ghp|gho|github_pat|xox[bap]|AKIA)[A-Za-z0-9_\-]{12,}|(?i:(?:api[_-]?key|secret|token|password|passwd)["\']?\s*[:=]\s*)["\']?[^\s"\',;]{6,})',re.S)
@@ -389,6 +460,15 @@ IX_STATES={'submitted','working','input-required','completed','failed','canceled
 
 def iso(v,default=''):
     return v[:40] if isinstance(v,str) and re.fullmatch(r'\d{4}-\d\d-\d\dT[0-9:.]+Z',v[:40]) else default
+
+def delivery_evidence(raw):
+    """Only signed-protocol enum values; no free text, links, tokens or claims inferred from state."""
+    raw=raw if isinstance(raw,dict) else {}
+    fields={'anet.delivery': {'pending','confirmed','unconfirmed'},
+            'anet.delivery_detail': {'not_sent','sent','queued_at_hub'},
+            'anet.effect_status': {'OK','UNVERIFIED','FAILED','UNAVAILABLE','PAYMENT_REQUIRED'},
+            'anet.receipt_verified': {'verified','unverified','unknown'}}
+    return {key:raw[key] for key,allowed in fields.items() if isinstance(raw.get(key),str) and raw[key] in allowed}
 
 def store_interactions(c,agent,items):
     """Node-pushed conversation records; every field is bounded and secrets are masked again here."""
@@ -402,6 +482,8 @@ def store_interactions(c,agent,items):
         state=str(it.get('state','working'))[:20];state=state if state in IX_STATES else 'working'
         c.execute('INSERT INTO interactions VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(agent_id,ix) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at,goal=excluded.goal',
             (agent['id'],it['id'],role,peer,redact(str(it.get('goal',''))[:8000]),state,created,updated))
+        evidence=delivery_evidence(it.get('evidence'))
+        c.execute('INSERT INTO interaction_evidence VALUES(?,?,?) ON CONFLICT(agent_id,ix) DO UPDATE SET evidence=excluded.evidence',(agent['id'],it['id'],json.dumps(evidence)))
         for m in (it.get('messages') or [])[:300]:
             if not isinstance(m,dict) or not re.fullmatch(r'[A-Za-z0-9\-]{8,64}',str(m.get('msg_id',''))) or m.get('from') not in ('me','them'):continue
             atts=[{'name':str(x.get('name',''))[:120],'size':x.get('size') if type(x.get('size')) is int else None,'mime':str(x.get('mime',''))[:80]} for x in (m.get('attachments') or [])[:20] if isinstance(x,dict)]
@@ -436,6 +518,9 @@ def long_task_caps(raw):
         return n if type(n) in (int,float) and 0<n<=maximum else None
     native=c.get('native') if isinstance(c.get('native'),dict) else {}
     native_view={k:native[k] for k in ('available','persistent_session','steer','pause','cancel_cleanup','interactive_attach') if type(native.get(k)) is bool}
+    if isinstance(native.get('harness'),str) and native['harness'] in EXECUTORS:native_view['harness']=native['harness']
+    if native.get('reason') in ('disabled_by_owner','native_probe_failed','adapter_has_no_verified_native_goals','unavailable'):
+        native_view['reason']=native['reason']
     routing=c.get('routing') if isinstance(c.get('routing'),dict) else {}
     routing_view={k:routing[k] for k in ('planned_opt_in','fallback_is_reported') if type(routing.get(k)) is bool}
     if routing.get('submit_default')=='native_if_available':routing_view['submit_default']='native_if_available'
@@ -593,7 +678,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.command != 'HEAD': self.wfile.write(b)
     def body(self):
         n=int(self.headers.get('Content-Length','0'))
-        if n>(1048576 if self.path=='/api/node/sync' else 32768): raise Problem('请求内容过大',413)
+        if n>(1048576 if self.path=='/api/node/sync' else 262144 if self.path=='/api/node/work-content' else 32768): raise Problem('请求内容过大',413)
         try: d=json.loads(self.rfile.read(n) or b'{}')
         except Exception:raise Problem('请求格式错误')
         if not isinstance(d,dict):raise Problem('请求格式错误')
@@ -647,15 +732,26 @@ class Handler(BaseHTTPRequestHandler):
             if method=='GET' and not m[2]:return self.respond(broker.status(a))
             if method=='POST' and m[2]=='authorize':
                 self.rate('workbuddy-authorize:'+a['id'],20)
-                return self.respond(broker.begin(a))
+                return self.respond(broker.begin(a,d.get('purpose','local_assistant')))
             if method=='POST' and m[2]=='revoke':
                 broker.current(a);broker.revoke(a)
-                with LOCK,db() as c:c.execute('UPDATE agents SET executor_ready=0 WHERE id=?',(a['id'],));event(c,u['id'],'workbuddy.revoked',a['id'])
+                with LOCK,db() as c:
+                    if a['kind']=='agent' and a['executor']=='workbuddy':
+                        c.execute('UPDATE agents SET executor_ready=0 WHERE id=?',(a['id'],))
+                    event(c,u['id'],'workbuddy.revoked',a['id'])
                 return self.respond({'ok':True})
         raise Problem('接口不存在',404)
     def dispatch(self,method):
         try:
             path=urlsplit(self.path).path
+            if desktop_release.route(self,method,ROOT):return
+            if method=='GET' and path in ['/download','/download.js','/download.css']:
+                name={'/download':'download.html','/download.js':'download.js','/download.css':'download.css'}[path]
+                ctype={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8'}[Path(name).suffix]
+                return self.respond((ROOT/'static'/name).read_bytes(),ctype=ctype)
+            if portal_delivery_routes.route(self,method,db,DATA,BASE):return
+            if method=='GET' and path=='/docs/anet-api-v1.txt':
+                return self.respond((ROOT/'static/docs/anet-api-v1.txt').read_bytes(),ctype='text/plain; charset=utf-8')
             if method=='GET' and path in ['/','/architecture.html','/app.js','/style.css','/connector.py','/pi_bridge.py','/harness_bridge.py','/favicon.svg','/windows-repair.md']:
                 f=ROOT/(path[1:] if path in ['/connector.py','/pi_bridge.py','/harness_bridge.py','/windows-repair.md'] else 'static/'+{'/':'index.html'}.get(path,path[1:]))
                 ct={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.svg':'image/svg+xml','.py':'text/plain; charset=utf-8','.md':'text/plain; charset=utf-8'}[f.suffix]
@@ -663,7 +759,7 @@ class Handler(BaseHTTPRequestHandler):
             if method=='GET' and path in ['/harness-launcher-windows-amd64.exe','/harness-launcher-windows-arm64.exe']:
                 return self.respond((ROOT/'native-launcher'/path[1:]).read_bytes(),ctype='application/octet-stream')
             if path=='/healthz':return self.respond({'ok':True,'service':'agent-portal'})
-            if path=='/api/config' and method=='GET':return self.respond({'registration_open':True,'harnesses':HARNESSES})
+            if path=='/api/config' and method=='GET':return self.respond({'registration_open':True,'harnesses':HARNESSES,'desktop_release':desktop_release.release(ROOT),'harness_capabilities':desktop_release.capabilities(ROOT)})
             if method not in ['GET']:
                 origin=self.headers.get('Origin')
                 if origin and origin!=BASE:raise Problem('不接受跨站请求',403)
@@ -752,6 +848,33 @@ class Handler(BaseHTTPRequestHandler):
                             row=dict(row);v=agent_view(row,row['owner_name'],a['owner_id'])
                             result.append({k:v.get(k) for k in ('aid','name','description','status','executor','long_task','capabilities','work','last_seen')})
                         return self.respond({'source':'agent-space','observed_at':now(),'agents':result})
+                    if path=='/api/node/work-content' and method=='POST':
+                        self.rate('work-content:'+a['id'],600)
+                        try: current = clean_work(json.loads(a.get('work') or 'null'))
+                        except (ValueError, TypeError): current = None
+                        if a['kind'] != 'agent' or not current or not current.get('content_synced'):
+                            raise Problem('任务内容同步未开启',403)
+                        tid = d.get('task_id')
+                        if not isinstance(tid, str) or tid not in {t['id'] for t in current['tasks']}:
+                            raise Problem('任务不在当前状态快照中',409)
+                        observed = work_time(d.get('observed_at'))
+                        content = clean_work_content(d.get('content'))
+                        if not observed or now()-observed>300 or not content:
+                            raise Problem('任务正文版本或观察时间无效',400)
+                        try: records = json.loads(a.get('work_content') or '{}')
+                        except (ValueError, TypeError): records = {}
+                        if not isinstance(records, dict): records = {}
+                        active = {t['id'] for t in current['tasks']}
+                        records = {k:v for k,v in records.items() if k in active}
+                        old = records.get(tid, {})
+                        if isinstance(old, dict) and type(old.get('observed_at')) in (int,float) and old['observed_at']>observed:
+                            raise Problem('已有更新的任务正文',409)
+                        if isinstance(old, dict) and old.get('observed_at') == observed:
+                            if old.get('content') != content:raise Problem('相同观察版本的正文不一致',409)
+                            return self.respond({'ok':True,'schema':1})
+                        records[tid] = {'observed_at': observed, 'content': content}
+                        c.execute('UPDATE agents SET work_content=? WHERE id=?',(json.dumps(records,ensure_ascii=False),a['id']))
+                        return self.respond({'ok':True,'schema':1})
                     if path=='/api/node/heartbeat' and method=='POST':
                         # Older connectors omit executor; that remains valid for existing Codex records.
                         matching=d.get('executor','codex')==a['executor']
@@ -763,6 +886,8 @@ class Handler(BaseHTTPRequestHandler):
                         if caps and len(caps)>8192:caps=None
                         work=clean_work(d.get('work')) if a['kind']=='agent' and matching else None
                         c.execute('UPDATE agents SET last_seen=?,policy_ok=?,executor_ready=?,node_connected=?,capabilities=?,requester_ready=?,runtime=?,work=? WHERE id=?',(now(),bool(d.get('policy_ok')) if a['kind']=='agent' else False,bool(d.get('executor_ready') and matching) if a['kind']=='agent' else False,bool(d.get('connected')),caps,d.get('requester_ready') is True,json.dumps(clean_runtime(d.get('runtime')),ensure_ascii=False) if a['kind']=='agent' and clean_runtime(d.get('runtime')) else None,json.dumps(work,ensure_ascii=False) if work else None,a['id']))
+                        if not work or not work.get('content_synced'):
+                            c.execute('UPDATE agents SET work_content=NULL WHERE id=?',(a['id'],))
                         return self.respond({'ok':True})
                     if path=='/api/node/sync' and method=='POST':
                         if a['kind']!='agent':raise Problem('调用设备不同步交互内容',403)
@@ -823,6 +948,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not full:raise Problem('所有者没有公开交互内容',403)
                     i=one(c,'SELECT ix id,role,peer,goal,state,created_at,updated_at FROM interactions WHERE agent_id=? AND ix=?',(a['id'],m[2]))
                     if not i:raise Problem('交互不存在',404)
+                    evidence_row=one(c,'SELECT evidence FROM interaction_evidence WHERE agent_id=? AND ix=?',(a['id'],m[2]))
+                    i['evidence']=delivery_evidence(json.loads(evidence_row['evidence'])) if evidence_row else {}
                     msgs=[dict(r) for r in c.execute('SELECT msg_id,sender,kind,body,attachments,created_at FROM ix_messages WHERE agent_id=? AND ix=? AND (body!=\'\' OR attachments IS NOT NULL) ORDER BY created_at,rowid LIMIT 500',(a['id'],m[2]))]
                     for x in msgs:x['attachments']=json.loads(x['attachments']) if x['attachments'] else []
                     i['peer_agent']=peer_names(c,u,[i['peer']]).get(i['peer'])
@@ -879,6 +1006,10 @@ class Handler(BaseHTTPRequestHandler):
                         c.execute('DELETE FROM agents WHERE id=?',(a['id'],));return self.respond({'ok':True})
                 if path.startswith('/api/admin/'):
                     if u['role']!='admin':raise Problem('需要管理员权限',403)
+                    if path=='/api/admin/workbuddy-app':
+                        if method=='GET':return self.respond(workbuddy().application_status())
+                        if method=='POST':return self.respond(workbuddy().configure_application(d))
+                        raise Problem('只支持读取和保存应用配置',405)
                     if path=='/api/admin/overview' and method=='GET':
                         users=[dict(x) for x in c.execute("SELECT u.id,u.username,u.name,u.role,u.enabled,u.created_at,SUM(CASE WHEN a.kind='agent' THEN 1 ELSE 0 END) agents,SUM(CASE WHEN a.kind='device' THEN 1 ELSE 0 END) devices FROM users u LEFT JOIN agents a ON a.owner_id=u.id GROUP BY u.id ORDER BY u.created_at")]
                         invs=[dict(x) for x in c.execute('SELECT id,kind,label,created_at,expires,used_at FROM invitations WHERE kind != ? ORDER BY created_at DESC LIMIT 30',('setup',))]

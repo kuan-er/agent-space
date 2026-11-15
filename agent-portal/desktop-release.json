@@ -1,0 +1,13 @@
+{
+  "schema": "anet-desktop-release/1",
+  "version": "0.3.0-preview.3",
+  "minimum_version": "0.2.0-preview.5",
+  "channel": "preview",
+  "artifact": {
+    "name": "ANetSetup-0.3.0-preview.3.exe",
+    "bytes": 496704000,
+    "sha256": "34a14bbde858cb32f93d54de23fa76ad861cd305158e241afb9c9adbbe3ce6ee",
+    "architecture": "x64",
+    "signing": "unsigned"
+  }
+}

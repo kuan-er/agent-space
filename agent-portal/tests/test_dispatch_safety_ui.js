@@ -1,0 +1,10 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const src=fs.readFileSync(require('node:path').join(__dirname,'../static/app.js'),'utf8');
+const ctx={esc:s=>String(s).replaceAll('<','&lt;'),evidenceTime:t=>'time:'+t};vm.createContext(ctx);
+vm.runInContext(src.slice(src.indexOf('const ACTION_STATE ='),src.indexOf('function assistantLog(')),ctx);
+assert.equal(ctx.unresolvedDispatches([]),'');
+const html=ctx.unresolvedDispatches([{id:'original-action',status:'unknown',target_name:'<script>',started_at:123,target_aid:'original-target',source_aid:'original-source',payload_sha256:'digest',phase:'invocation_started'}]);
+for(const text of ['original-action','original-target','original-source','digest','time:123','&lt;script>']) assert.ok(html.includes(text),text);
+assert.ok(!html.includes('<script>'));assert.ok(!html.includes('data-decide'));assert.ok(!html.includes('<button'));
+assert.ok(src.includes('return unresolvedDispatches(v.unresolved) + ('));
+console.log('Unknown dispatch retains original action, time, target/source and hash outside chat; escaped read-only UI contains no resend button');

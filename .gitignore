@@ -24,3 +24,7 @@ node_modules/
 admin-setup-link.txt
 connection.json
 pair-pending.json
+payload/
+out/
+evidence/
+desktop-downloads/

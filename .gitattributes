@@ -1,3 +1,20 @@
-* text=auto
+* text=auto whitespace=cr-at-eol
 # Unified diff context prefixes are data and must remain byte-for-byte applicable.
 *.patch -whitespace
+*.sh text eol=lf
+/patches/anet/*.patch -text
+# Keep the sealed source bytes used for package and backend checksums.
+/client/cli/anet_account/** -text
+/client/cli/anet_harnesses/** -text
+/client/cli/anet_provider_harnesses/** -text
+/client/cli/anet_setup/** -text
+/client/cli/taskd_app/** -text
+/client/cli/yaml/** -text -whitespace
+/client/cli/main.py -text
+/client/cli/install.py -text
+/client/cli/install.sh -text
+/client/cli/README.txt -text
+/client/windows/installer/backend/** -text
+/client/windows/desktop/backend-manifest.json -text
+/client/cli/taskd_app/taskd/execution_facts.py whitespace=cr-at-eol,-blank-at-eof
+/client/windows/installer/backend/broker/vendor/taskd/execution_facts.py whitespace=cr-at-eol,-blank-at-eof
